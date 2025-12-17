@@ -1,0 +1,21 @@
+svg {
+  width: 1200px;
+  height: 800px;
+  border: 1px solid #ccc;
+  background: #eee;
+  box-shadow: 2px 2px 12px rgba(0, 0, 0, 0.2);
+}
+
+.route {
+  fill: none;
+  stroke: rgba(0, 128, 0, 0.5);
+  stroke-width: 5;
+}
+
+.vehicleInitializing {
+  fill: gray;
+}
+
+.vehicle {
+  fill: blue;
+}

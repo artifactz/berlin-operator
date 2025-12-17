@@ -1,0 +1,17 @@
+{
+  "name": "berlin-operator",
+  "version": "0.0.1",
+  "description": "Real-time public transit trips viewer",
+  "type": "module",
+  "main": "index.js",
+  "scripts": {
+    "dev": "vite"
+  },
+  "author": "",
+  "license": "",
+  "dependencies": {
+    "bottleneck": "^2.19.5",
+    "typescript": "^5.9.3",
+    "vite": "^7.2.7"
+  }
+}
