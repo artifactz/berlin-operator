@@ -40,14 +40,13 @@ export async function fetchAllTrips(): Promise<Array<PreliminaryTripData>> {
   return tripsLists.flat();
 }
 
-export async function fetchTripDetails(trip: PreliminaryTripData): Promise<DetailedTripData> {
-  const id = trip['id'];
+export async function fetchTripDetails(id: string): Promise<DetailedTripData> {
   const url = `https://v6.bvg.transport.rest/trips/${id}?polyline=true`;
   return limiter.schedule(() =>
     fetch(url)
       .then(async response => {
         const responseData = await response.json();
-        trip.polyline = responseData.trip.polyline;
+        // TODO handle 500 response
         return responseData.trip;
       })
   );

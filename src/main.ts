@@ -5,7 +5,7 @@ import type { PreliminaryTripData, DetailedTripData, StopData } from "./types.js
 import L, { DivIcon } from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 
-import * as lineColors from '../public/colors.json' with { type: 'json' }
+import * as lineColors from './colors.json' with { type: 'json' }
 
 
 class Trip {
@@ -280,7 +280,7 @@ map.on('click', (e) => {
     const trip = new Trip(preliminaryData);
     trips.set(preliminaryData.id, trip);
 
-    fetchTripDetails(preliminaryData).then((detailedData: DetailedTripData) => {
+    fetchTripDetails(preliminaryData.id).then((detailedData: DetailedTripData) => {
       if (detailedData.cancelled) {
         trip.marker.remove();
         trips.delete(preliminaryData.id);
