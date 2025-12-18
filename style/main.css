@@ -1,10 +1,20 @@
-svg {
+body {
+    padding: 0;
+    margin: 0;
+}
+
+html, body, #map {
+    height: 100vh;
+    width: 100vw;
+}
+
+/* svg {
   width: 1200px;
   height: 800px;
   border: 1px solid #ccc;
   background: #eee;
   box-shadow: 2px 2px 12px rgba(0, 0, 0, 0.2);
-}
+} */
 
 .route {
   fill: none;
@@ -12,10 +22,44 @@ svg {
   stroke-width: 5;
 }
 
-.vehicleInitializing {
-  fill: gray;
+.vehicle {
+  font-size: 25px;
+  background-color: transparent;
+  text-shadow: 0px 0px 3px #fff, 0px 0px 3px #fff, 0px 0px 3px #fff;
 }
 
-.vehicle {
-  fill: blue;
+.preliminary-vehicle {
+  filter: saturate(0.1);
+}
+
+.line-info-container {
+  display: flex;
+  align-items: stretch; /* ensures both sides match height */
+  border: 1px solid #ccc;
+  width: fit-content;
+}
+
+.line-name {
+  display: flex;
+  align-items: center;       /* center vertically */
+  justify-content: center;   /* center horizontally */
+  font-size: 2em;
+  padding: 0 20px;
+  color: white;
+}
+
+.line-grid {
+  display: grid;
+  grid-template-columns: auto 1fr; /* 2 columns */
+  grid-template-rows: auto 1fr;    /* 2 rows */
+  gap: 3px;
+  padding: 6px;
+}
+
+.line-grid-header {
+  font-size: 12px;
+}
+
+.line-grid-data {
+  font-size: 13px;
 }

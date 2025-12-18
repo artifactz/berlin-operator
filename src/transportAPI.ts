@@ -3,14 +3,9 @@ import type { DetailedTripData, PreliminaryTripData } from "./types.js";
 
 // Limiter: 100 requests per minute, 200 burst
 const limiter = new Bottleneck({
-  minTime: 100, // ms
-
-  // reservoir: 200,
-  reservoir: 10,
-
-  // reservoirRefreshInterval: 60 * 1000 / 100,
-  reservoirRefreshInterval: 400,
-
+  minTime: 20, // ms
+  reservoir: 1, //200,
+  reservoirRefreshInterval: 60 * 1000 / 100,
   reservoirRefreshAmount: 1,
 });
 

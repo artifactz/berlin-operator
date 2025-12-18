@@ -1,20 +1,77 @@
 import { fetchAllTrips, fetchTripDetails } from "./transportAPI.js";
-import { addDragZoomCapabilities } from "./svgZoomer.js";
-import { Point } from "./types.js"
+import { Point, LatLon } from "./types.js"
 import type { PreliminaryTripData, DetailedTripData, StopData } from "./types.js"
+
+import L, { DivIcon } from 'leaflet';
+import 'leaflet/dist/leaflet.css';
+
+import * as lineColors from '../public/colors.json' with { type: 'json' }
 
 
 class Trip {
-  data: DetailedTripData;
+  marker: L.Marker;
+  data: PreliminaryTripData | DetailedTripData;
+  isDetailed: boolean;
   stops: Array<StopData>;
 
-  constructor(data: DetailedTripData) {
-    this.data = data;
+  constructor(data: PreliminaryTripData) {
+    this.data = data
+    this.isDetailed = false;
     this.stops = [];
+    const color = lineColors[this.name] ?? '#555';
+
+    const origin = simplifyStopName(this.data.origin.name);
+    const destination = simplifyStopName(this.data.destination.name);
+    const popupHtml = `<div class="line-info-container">
+  <div class="line-name" style="background-color: ${color}">${this.name}</div>
+  <div class="line-grid">
+    <div class="line-grid-header">Von:</div>
+    <div class="line-grid-data">${origin}</div>
+    <div class="line-grid-header">Nach:</div>
+    <div class="line-grid-data">${destination}</div>
+  </div>
+</div>`;
+
+    this.marker = L.marker([data.currentLocation.latitude, data.currentLocation.longitude], {
+      icon: this.createIcon()
+    })
+      .bindPopup(popupHtml)
+      .addTo(map);
+
+    this.marker.on('click', (e) => {
+      if (currentRoute) { currentRoute.remove(); }
+      if (!this.isDetailed) { return; }
+      const latLons = this.getRouteLatLons();
+      currentRoute = L.polyline(latLons, {color}).addTo(map);
+    });
   }
 
-  static fromTripJson(data: DetailedTripData) {
-    const trip = new Trip(data);
+  get emoji(): string {
+    const product = this.data.line.product;
+    return (product == 'suburban')
+      ? '🚈'
+      : (product == 'subway')
+        ? '🚇'
+        : (product == 'tram')
+          ? '🚋'
+          : (product == 'bus')
+            ? '🚌'
+            : (product == 'ferry')
+              ? '🛥️'
+              : '🐒';  // Unknown transit product
+  }
+
+  get name(): string {
+    return this.data.line.name;
+  }
+
+  get cancelled(): boolean {
+    return this.data.cancelled;
+  }
+
+  setData(data: DetailedTripData) {
+    this.data = data;
+    this.isDetailed = true;
 
     // Iterate polyline and stopover items in parallel
     let j = -1;
@@ -29,8 +86,8 @@ class Trip {
         j++;
 
         if (j > 0) {
-          trip.stops[j - 1]!.segmentPoints.push(point);
-          trip.stops[j - 1]!.segmentLength = getSegmentLength(trip.stops[j - 1]!);
+          this.stops[j - 1]!.segmentPoints.push(point);
+          this.stops[j - 1]!.segmentLength = getSegmentLength(this.stops[j - 1]!);
         }
 
         const stop = data.stopovers[j];
@@ -44,7 +101,7 @@ class Trip {
           departure += 7500;
         }
 
-        trip.stops.push({
+        this.stops.push({
           id: stop.stop.id,
           latitude: stop.stop.location.latitude,
           longitude: stop.stop.location.longitude,
@@ -59,29 +116,28 @@ class Trip {
         lastStopId = element.properties.id;
 
       } else {
-        trip.stops[j]!.segmentPoints.push(point);
+        this.stops[j]!.segmentPoints.push(point);
       }
     }
-
-    return trip;
   }
 
-  getPolyline() {
-      const polyline = document.createElementNS('http://www.w3.org/2000/svg', 'polyline');
+  updateMarkerIcon() {
+    this.marker.setIcon(this.createIcon());
+  }
 
-      const id = `${this.data.id}_route`;
-      polyline.setAttribute('id', id);
+  createIcon(): L.DivIcon {
+    const className = this.isDetailed ? 'vehicle' : 'preliminary-vehicle vehicle';
+    return L.divIcon({
+      className,
+      html: `<div>${this.emoji}</div>`,
+      iconSize: [40, 40],
+      iconAnchor: [20, 20],
+    });
+  }
 
-      const points = [`${this.stops[0]!.point.x},${this.stops[0]!.point.y}`];
-      this.stops.forEach(stop => {
-        stop.segmentPoints.forEach(p => {
-          points.push(`${p.x},${p.y}`);
-        });
-      });
-      polyline.setAttribute('points', points.join(' '));
-      polyline.classList.add('route');
-
-      return polyline;
+  updateMarkerPosition() {
+    const latLon = this.getCurrentLatLon();
+    this.marker.setLatLng([latLon.lat, latLon.lon]);
   }
 
   isFinished(extraSeconds = 15) {
@@ -90,7 +146,7 @@ class Trip {
     return this.data.arrival + extraSeconds * 1000 < now;
   }
 
-  getCurrentPosition() {
+  getCurrentPosition(): Point {
     const now = Date.now();
     let fromStop = this.stops[0]!;
     let toStop = this.stops[this.stops.length - 1]!;
@@ -128,10 +184,10 @@ class Trip {
       const pointDistance = Math.sqrt(dx * dx + dy * dy);
       if (distanceAlongSegment <= pointDistance) {
         const ratio = distanceAlongSegment / pointDistance;
-        return {
-          x: p1.x + ratio * dx,
-          y: p1.y + ratio * dy,
-        }
+        return new Point(
+          p1.x + ratio * dx,
+          p1.y + ratio * dy,
+        )
       } else {
         distanceAlongSegment -= pointDistance;
       }
@@ -139,6 +195,25 @@ class Trip {
     }
 
     console.assert(false, 'Should not reach here');
+    return new Point(0, 0);
+  }
+
+  getCurrentLatLon(): LatLon {
+    const point = this.getCurrentPosition();
+    return getLatLonFromPoint(point.x, point.y);
+  }
+
+  getRoutePoints() {
+    const points = [this.stops[0]!.point];
+    this.stops.forEach(stop => { stop.segmentPoints.forEach(p => { points.push(p); }); });
+    return points;
+  }
+
+  getRouteLatLons(): Array<[number, number]> {
+    return this.getRoutePoints().map(p => {
+      const latLon = getLatLonFromPoint(p.x, p.y);
+      return [latLon.lat, latLon.lon];
+    });
   }
 }
 
@@ -147,7 +222,15 @@ function getPointFromLatLon(lat: number, lon: number, originLat = 52.519170, ori
   const lonScale = Math.cos(originLat / 180 * Math.PI);
   const x = (lon - originLon) * METERS_PER_DEG * lonScale;
   const y = (lat - originLat) * METERS_PER_DEG;
-  return {x, y};
+  return new Point(x, y);
+}
+
+function getLatLonFromPoint(x: number, y: number, originLat = 52.519170, originLon = 13.409606): LatLon {
+  const METERS_PER_DEG = 40074000 / 360;  // Earth circumference
+  const lonScale = Math.cos(originLat / 180 * Math.PI);
+  const lon = x / (METERS_PER_DEG * lonScale) + originLon;
+  const lat = y / METERS_PER_DEG + originLat;
+  return new LatLon(lat, lon);
 }
 
 function getSegmentLength(stop: StopData) {
@@ -163,112 +246,77 @@ function getSegmentLength(stop: StopData) {
   return length;
 }
 
-
-const svg = document.getElementById('map')!;
-addDragZoomCapabilities(svg, { x: -6000, y: -4000, w: 12000, h: 8000 });
-
-
-function addPreliminaryTrip(data: PreliminaryTripData) {
-  const circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
-
-  console.assert(document.getElementById(data.id) === null, `Duplicate trip id ${data.id}.`);
-  circle.setAttribute('id', data.id);
-
-  circle.classList.add('vehicleInitializing');
-
-  const point = getPointFromLatLon(data.currentLocation.latitude, data.currentLocation.longitude);
-  circle.setAttribute('cx', `${point.x}`);
-  circle.setAttribute('cy', `${point.y}`);
-  circle.setAttribute('r', '40');
-
-  svg.appendChild(circle);
+function simplifyStopName(stopName: string): string {
+  if (stopName.endsWith(' (Berlin)')) {
+    stopName = stopName.slice(0, -9);
+  }
+  return stopName;
 }
 
-function removePreliminaryTrip(data: PreliminaryTripData) {
-  const circle = document.getElementById(data.id)!;
-  svg.removeChild(circle);
-}
 
-/**
- * Adds a "detailed trip" element set up with hover events to the SVG container after its preliminary element was
- * removed.
- */
-function addDetailedTrip(trip: Trip) {
-  const polyline = trip.getPolyline();
+const map = L.map('map').setView([52.52, 13.405], 13);
 
-  const circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
-  circle.setAttribute('id', trip.data.id);
-  circle.classList.add('vehicle');
+L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 19,
+    attribution: '&copy; <a href="http://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+}).addTo(map);
 
-  const pos = trip.getCurrentPosition();
-  circle.setAttribute('cx', pos.x);
-  circle.setAttribute('cy', pos.y);
-  circle.setAttribute('r', '50');
-
-  circle.addEventListener('mouseenter', () => {
-    svg.removeChild(circle);
-    svg.appendChild(polyline);
-    svg.appendChild(circle); // Bring to front
-  });
-  circle.addEventListener('mouseleave', () => {
-    svg.removeChild(polyline);
-  });
-
-  // Bring to front
-  svg.appendChild(circle);
-}
-
+map.locate({setView: true, maxZoom: 16});
 
 let trips = new Map();
+let currentRoute: L.Polyline | null = null;
+
+map.on('click', (e) => {
+  if (currentRoute) { currentRoute.remove(); }
+  currentRoute = null;
+});
+
 
 (async () => {
   const fetchTimestamp = Date.now();
   const fetchedTrips = await fetchAllTrips();
 
-  fetchedTrips.forEach((preliminaryData: PreliminaryTripData) => {
-
-    addPreliminaryTrip(preliminaryData);
+  for (const preliminaryData of fetchedTrips) {
+    const trip = new Trip(preliminaryData);
+    trips.set(preliminaryData.id, trip);
 
     fetchTripDetails(preliminaryData).then((detailedData: DetailedTripData) => {
-      const trip = Trip.fromTripJson(detailedData);
-      removePreliminaryTrip(preliminaryData);
+      if (detailedData.cancelled) {
+        trip.marker.remove();
+        trips.delete(preliminaryData.id);
+        return;  // Abort
+      }
 
-      if (!trip.data.cancelled) {
-        if (detailedData.id != preliminaryData.id) {
-          console.log(`Updated trip id from ${preliminaryData.id} to ${detailedData.id} after fetching details.`);
-        }
-
-        if (trips.has(trip.data.id)) {
-          console.log(`Skipping duplicate trip id ${trip.data.id} after fetching details.`);
+      if (detailedData.id != preliminaryData.id) {
+        trips.delete(preliminaryData.id);
+        if (trips.has(detailedData.id)) {
+          console.log(`Removed trip with id ${preliminaryData.id} becaused it resolved to existing trip with id ${detailedData.id}.`);
+          return;  // Abort
         } else {
-          // Adding a new element brings it to the front
-          addDetailedTrip(trip);
-          trips.set(trip.data.id, trip);
+          trips.set(detailedData.id, trip);
+          console.log(`Updated trip id from ${preliminaryData.id} to ${detailedData.id}.`);
         }
       }
+
+      trip.setData(detailedData);
+      trip.updateMarkerIcon();
     });
-  });
+  }
 })();
 
 
 // Animation loop
 function animate() {
-  trips.values().forEach(trip => {
-    const circle = document.getElementById(trip.data.id)!;
-    console.assert(circle !== null);
+  trips.values().forEach((trip: Trip) => {
+    if (!trip.isDetailed) { return; }
 
     if (trip.isFinished()) {
-      circle.removeEventListener('mouseenter', () => {});
-      circle.removeEventListener('mouseleave', () => {});
-      svg.removeChild(circle);
+      trip.marker.remove();
       trips.delete(trip.data.id);
 
     } else {
-      const pos = trip.getCurrentPosition();
-      circle.setAttribute("cx", pos.x);
-      circle.setAttribute("cy", pos.y);
-      circle.classList.remove('vehicleInitializing');
-      circle.classList.add('vehicle');
+      const latlon = trip.getCurrentLatLon();
+      trip.marker.setLatLng([latlon.lat, latlon.lon]);
     }
   });
 

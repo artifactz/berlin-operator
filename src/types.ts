@@ -7,6 +7,15 @@ export class Point {
   }
 }
 
+export class LatLon {
+  lat: number;
+  lon: number;
+  constructor(lat: number, lon: number) {
+    this.lat = lat;
+    this.lon = lon;
+  }
+}
+
 export interface PreliminaryTripData {
   [key: string]: any;
 }
