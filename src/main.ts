@@ -1,4 +1,4 @@
-import { fetchAllTrips, fetchTripDetails } from "./transportAPI.js";
+import { fetchAllTrips, fetchTripDetails, updateRequestQueue } from "./transportAPI.js";
 import { Point, LatLon } from "./types.js"
 import type { PreliminaryTripData, DetailedTripData, StopData } from "./types.js"
 
@@ -8,6 +8,10 @@ import 'leaflet/dist/leaflet.css';
 import * as lineColors from './colors.json' with { type: 'json' }
 
 
+/**
+ * Represents a trip on the map, i.e. a vehicle with a location.
+ * As soon as detailed data is available (isDetailed = true), stops data is used to getCurrentPosition.
+ */
 class Trip {
   marker: L.Marker;
   data: PreliminaryTripData | DetailedTripData;
@@ -65,10 +69,17 @@ class Trip {
     return this.data.line.name;
   }
 
+  get id(): string {
+    return this.data.id;
+  }
+
   get cancelled(): boolean {
     return this.data.cancelled;
   }
 
+  /**
+   * Makes this a detailed trip enabling getCurrentPosition.
+   */
   setData(data: DetailedTripData) {
     this.data = data;
     this.isDetailed = true;
@@ -263,7 +274,7 @@ L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
 
 map.locate({setView: true, maxZoom: 16});
 
-let trips = new Map();
+let trips = new Map<string, Trip>();
 let currentRoute: L.Polyline | null = null;
 
 map.on('click', (e) => {
@@ -272,37 +283,72 @@ map.on('click', (e) => {
 });
 
 
-(async () => {
-  const fetchTimestamp = Date.now();
-  const fetchedTrips = await fetchAllTrips();
-
-  for (const preliminaryData of fetchedTrips) {
-    const trip = new Trip(preliminaryData);
-    trips.set(preliminaryData.id, trip);
-
-    fetchTripDetails(preliminaryData.id).then((detailedData: DetailedTripData) => {
-      if (detailedData.cancelled) {
-        trip.marker.remove();
-        trips.delete(preliminaryData.id);
-        return;  // Abort
-      }
-
-      if (detailedData.id != preliminaryData.id) {
-        trips.delete(preliminaryData.id);
-        if (trips.has(detailedData.id)) {
-          console.log(`Removed trip with id ${preliminaryData.id} becaused it resolved to existing trip with id ${detailedData.id}.`);
-          return;  // Abort
-        } else {
-          trips.set(detailedData.id, trip);
-          console.log(`Updated trip id from ${preliminaryData.id} to ${detailedData.id}.`);
-        }
-      }
-
-      trip.setData(detailedData);
-      trip.updateMarkerIcon();
-    });
+fetchAllTrips((preliminaryData) => {
+  if (trips.has(preliminaryData.id)) {
+    console.log(`Skipping duplicate preliminary trip with id ${preliminaryData.id}.`);
+    return;
   }
-})();
+  const trip = new Trip(preliminaryData);
+  trips.set(preliminaryData.id, trip);
+
+  fetchTripDetails(preliminaryData.id, (detailedData) => {
+    onDetailedData(trip, detailedData);
+  });
+}, () => {
+  determineRequestOrder();
+});
+
+/**
+ * Update the request queue to fetch detailed trip data for trips in order of proximity to the map center.
+ */
+function determineRequestOrder() {
+  const queue = [];
+  for (const trip of trips.values()) {
+    if (trip.isDetailed) { continue; }
+    const dist = map.distance(map.getCenter(), trip.marker.getLatLng());
+    queue.push({trip, dist});
+  }
+  queue.sort((a, b) => a.dist - b.dist);
+  updateRequestQueue(queue.map(item => item.trip.id), (id, detailedData) => {
+    const trip = trips.get(id);
+    if (!trip) {
+      console.warn(`Received detailed data for unknown trip id ${id}.`);
+      return;
+    }
+    onDetailedData(trip, detailedData);
+  });
+}
+
+/**
+ * Handles arrival of fetched detailed trip data.
+ */
+function onDetailedData(trip: Trip, data: DetailedTripData) {
+  if (data.cancelled) {
+    trip.marker.remove();
+    trips.delete(trip.id);
+    return;  // Abort
+  }
+
+  if (data.id != trip.id) {
+    trips.delete(trip.id);
+    if (trips.has(data.id)) {
+      console.log(`Removed trip with id ${trip.id} becaused it resolved to existing trip with id ${data.id}.`);
+      return;  // Abort
+    } else {
+      trips.set(data.id, trip);
+      console.log(`Updated trip id from ${trip.id} to ${data.id}.`);
+    }
+  }
+
+  trip.setData(data);
+  trip.updateMarkerIcon();
+}
+
+
+map.on("moveend zoomend", () => {
+  console.log("Map moved, fetching details for visible preliminary trips.");
+  determineRequestOrder();
+});
 
 
 // Animation loop

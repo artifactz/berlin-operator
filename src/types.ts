@@ -28,4 +28,3 @@ export interface StopData {
   [key: string]: any;
   segmentPoints: Array<Point>;
 }
-
