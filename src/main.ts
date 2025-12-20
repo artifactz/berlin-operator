@@ -367,6 +367,10 @@ function animate() {
     if (!trip.isDetailed) { return; }
 
     if (trip.isFinished()) {
+      if (trip.marker.getPopup()!.isOpen()) {
+        currentRoute!.remove();
+        currentRoute = null;
+      }
       trip.marker.remove();
       trips.delete(trip.data.id);
 
