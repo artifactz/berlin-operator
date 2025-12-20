@@ -40,14 +40,13 @@ class Trip {
       icon: this.createIcon()
     })
       .bindPopup(popupHtml)
-      .addTo(map);
-
-    this.marker.on('click', (e) => {
-      if (currentRoute) { currentRoute.remove(); }
-      if (!this.isDetailed) { return; }
-      const latLons = this.getRouteLatLons();
-      currentRoute = L.polyline(latLons, {color}).addTo(map);
-    });
+      .addTo(map)
+      .on('click', (e) => {
+        if (currentRoute) { currentRoute.remove(); }
+        if (!this.isDetailed) { return; }
+        const latLons = this.getRouteLatLons();
+        currentRoute = L.polyline(latLons, {color}).addTo(map);
+      });
   }
 
   get emoji(): string {
@@ -75,6 +74,16 @@ class Trip {
 
   get cancelled(): boolean {
     return this.data.cancelled;
+  }
+
+  get departure(): number {
+    console.assert(this.data.departure != null);
+    return Date.parse(this.data.departure);
+  }
+
+  get arrival(): number {
+    console.assert(this.data.arrival != null);
+    return Date.parse(this.data.arrival);
   }
 
   /**
@@ -130,6 +139,10 @@ class Trip {
         this.stops[j]!.segmentPoints.push(point);
       }
     }
+
+    if (this.stops[this.stops.length - 1]!.arrival != this.arrival) {
+      console.warn(`Mismatch between last stop arrival ${this.stops[this.stops.length - 1]!.arrival} and trip arrival ${this.arrival} for trip id ${this.id} (${this.name}).`);
+    }
   }
 
   updateMarkerIcon() {
@@ -152,9 +165,7 @@ class Trip {
   }
 
   isFinished(extraSeconds = 15) {
-    const now = Date.now();
-    console.assert(this.data.arrival != null);
-    return this.data.arrival + extraSeconds * 1000 < now;
+    return this.arrival + extraSeconds * 1000 < Date.now();
   }
 
   getCurrentPosition(): Point {
@@ -346,7 +357,6 @@ function onDetailedData(trip: Trip, data: DetailedTripData) {
 
 
 map.on("moveend zoomend", () => {
-  console.log("Map moved, fetching details for visible preliminary trips.");
   determineRequestOrder();
 });
 
