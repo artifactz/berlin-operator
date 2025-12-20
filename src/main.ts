@@ -1,4 +1,4 @@
-import { fetchAllTrips, fetchTripDetails, updateRequestQueue } from "./transportAPI.js";
+import { burst, fetchAllTrips, fetchTripDetails, updateRequestQueue } from "./transportAPI.js";
 import { Point, LatLon } from "./types.js"
 import type { PreliminaryTripData, DetailedTripData, StopData } from "./types.js"
 
@@ -358,6 +358,7 @@ function onDetailedData(trip: Trip, data: DetailedTripData) {
 
 map.on("moveend zoomend", () => {
   determineRequestOrder();
+  burst();
 });
 
 
