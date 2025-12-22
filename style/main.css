@@ -29,7 +29,11 @@ html, body, #map {
 }
 
 .preliminary-vehicle {
-  filter: saturate(0.1);
+  filter: saturate(0.07);
+}
+
+.updated-vehicle {
+  text-shadow: 0px 0px 6px #8af, 0px 0px 6px #8af, 0px 0px 6px #8af, 0px 0px 6px #8af;
 }
 
 .line-info-container {

@@ -15,13 +15,11 @@ import * as lineColors from './colors.json' with { type: 'json' }
 class Trip {
   marker: L.Marker;
   data: PreliminaryTripData | DetailedTripData;
-  isDetailed: boolean;
-  stops: Array<StopData>;
+  detailsTimestamp: number | null = null;
+  stops: Array<StopData> = [];
 
   constructor(data: PreliminaryTripData) {
-    this.data = data
-    this.isDetailed = false;
-    this.stops = [];
+    this.data = data;
     const color = lineColors[this.name] ?? '#555';
 
     const origin = simplifyStopName(this.data.origin.name);
@@ -86,12 +84,17 @@ class Trip {
     return Date.parse(this.data.arrival);
   }
 
+  get isDetailed(): boolean {
+    return this.detailsTimestamp !== null;
+  }
+
   /**
    * Makes this a detailed trip enabling getCurrentPosition.
    */
   setData(data: DetailedTripData) {
     this.data = data;
-    this.isDetailed = true;
+    this.detailsTimestamp = Date.now();
+    this.stops = [];
 
     // Iterate polyline and stopover items in parallel
     let j = -1;
@@ -145,12 +148,16 @@ class Trip {
     }
   }
 
-  updateMarkerIcon() {
-    this.marker.setIcon(this.createIcon());
+  updateMarkerIcon(highlightUpdate = false) {
+    this.marker.setIcon(this.createIcon(highlightUpdate));
   }
 
-  createIcon(): L.DivIcon {
-    const className = this.isDetailed ? 'vehicle' : 'preliminary-vehicle vehicle';
+  createIcon(highlightUpdate = false): L.DivIcon {
+    const className = (!this.isDetailed)
+      ? 'preliminary-vehicle vehicle'
+      : highlightUpdate
+        ? 'updated-vehicle vehicle'
+        : 'vehicle';
     return L.divIcon({
       className,
       html: `<div>${this.emoji}</div>`,
@@ -294,32 +301,57 @@ map.on('click', (e) => {
 });
 
 
-fetchAllTrips((preliminaryData) => {
-  if (trips.has(preliminaryData.id)) {
-    console.log(`Skipping duplicate preliminary trip with id ${preliminaryData.id}.`);
-    return;
-  }
-  const trip = new Trip(preliminaryData);
-  trips.set(preliminaryData.id, trip);
-
-  fetchTripDetails(preliminaryData.id, (detailedData) => {
-    onDetailedData(trip, detailedData);
-  });
-}, () => {
-  determineRequestOrder();
-});
+let fetchNewTripsTimer: ReturnType<typeof setInterval> | null = null;
 
 /**
- * Update the request queue to fetch detailed trip data for trips in order of proximity to the map center.
+ * Fetches preliminary data for all trips, adds new ones, and schedules a detailed data request for them.
  */
-function determineRequestOrder() {
+function fetchNewTrips() {
+  console.log('Fetching new trips...');
+  fetchAllTrips((preliminaryData) => {
+    if (trips.has(preliminaryData.id)) {
+      // console.log(`Skipping duplicate preliminary trip with id ${preliminaryData.id}.`);
+      return;
+    }
+    const trip = new Trip(preliminaryData);
+    trips.set(preliminaryData.id, trip);
+
+    fetchTripDetails(preliminaryData.id, (detailedData) => {
+      onDetailedData(trip, detailedData);
+    });
+  }, () => {
+    updateRequestOrder();
+  });
+}
+
+fetchNewTrips();
+fetchNewTripsTimer = setInterval(() => {
+  fetchNewTrips();
+}, 90000);  // Fetch new trips every 90 seconds
+
+
+let updateRequestOrderTimer: ReturnType<typeof setInterval> | null = null;
+
+/**
+ * Updates the request queue to fetch detailed trip data in order of proximity to the map center and time since last
+ * update.
+ */
+function updateRequestOrder() {
   const queue = [];
+  const center = map.getCenter();
   for (const trip of trips.values()) {
-    if (trip.isDetailed) { continue; }
-    const dist = map.distance(map.getCenter(), trip.marker.getLatLng());
-    queue.push({trip, dist});
+    const distanceMeters = map.distance(center, trip.marker.getLatLng());
+    let priority = distanceMeters;  // Requests with lower priority value are executed first
+    if (trip.isDetailed) {
+      const ageSeconds = (Date.now() - trip.detailsTimestamp!) / 1000;
+      if (ageSeconds < 1) {
+        continue;
+      }
+      priority += 5000 - 50 * ageSeconds;
+    }
+    queue.push({trip, priority});
   }
-  queue.sort((a, b) => a.dist - b.dist);
+  queue.sort((a, b) => a.priority - b.priority);
   updateRequestQueue(queue.map(item => item.trip.id), (id, detailedData) => {
     const trip = trips.get(id);
     if (!trip) {
@@ -328,12 +360,23 @@ function determineRequestOrder() {
     }
     onDetailedData(trip, detailedData);
   });
+
+  if (updateRequestOrderTimer) { clearInterval(updateRequestOrderTimer); }
+  updateRequestOrderTimer = setInterval(() => {
+    updateRequestOrder();
+  }, 10000);  // Update every 10 seconds
 }
 
 /**
  * Handles arrival of fetched detailed trip data.
  */
 function onDetailedData(trip: Trip, data: DetailedTripData) {
+  if (data.notModified) {
+    trip.detailsTimestamp = Date.now();
+    highlightMarker(trip);
+    return;
+  }
+
   if (data.cancelled) {
     trip.marker.remove();
     trips.delete(trip.id);
@@ -352,12 +395,21 @@ function onDetailedData(trip: Trip, data: DetailedTripData) {
   }
 
   trip.setData(data);
-  trip.updateMarkerIcon();
+  highlightMarker(trip);
+}
+
+/**
+ * Flashes the marker icon to highlight an update.
+ */
+function highlightMarker(trip: Trip) {
+  trip.updateMarkerIcon(true);
+  setTimeout(() => { trip.updateMarkerIcon(); }, 750);
+
 }
 
 
 map.on("moveend zoomend", () => {
-  determineRequestOrder();
+  updateRequestOrder();
   burst();
 });
 

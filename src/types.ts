@@ -22,6 +22,7 @@ export interface PreliminaryTripData {
 
 export interface DetailedTripData {
   [key: string]: any;
+  notModified?: boolean;
 }
 
 export interface StopData {

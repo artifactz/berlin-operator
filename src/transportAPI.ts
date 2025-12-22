@@ -182,15 +182,22 @@ async function performTripRequest(
 ) {
     const url = `https://v6.bvg.transport.rest/trips/${id}?polyline=true`;
     const response = await fetch(url);
+
     if (response.status == 500) {
       backoff();
       requestQueue.add(() => performTripRequest(id, tripCallback));
     }
+
+    if (response.status == 304) {
+      tripCallback(id, { notModified: true });
+      return;
+    }
+
     const responseData = await response.json();
     tripCallback(id, responseData.trip);
 }
 
-export function burst(intervalMs = 100, durationMs = 60000) {
+export function burst(intervalMs = 300, durationMs = 60000) {
   requestQueue.burst(intervalMs, durationMs);
 }
 
