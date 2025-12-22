@@ -290,7 +290,7 @@ L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
     attribution: '&copy; <a href="http://www.openstreetmap.org/copyright">OpenStreetMap</a>'
 }).addTo(map);
 
-map.locate({setView: true, maxZoom: 16});
+map.locate({setView: true, maxZoom: 15});
 
 let trips = new Map<string, Trip>();
 let currentRoute: L.Polyline | null = null;
