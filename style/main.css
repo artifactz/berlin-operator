@@ -48,7 +48,7 @@ html, body, #map {
   align-items: center;       /* center vertically */
   justify-content: center;   /* center horizontally */
   font-size: 2em;
-  padding: 0 20px;
+  padding: 0 10px;
   color: white;
 }
 
@@ -66,4 +66,15 @@ html, body, #map {
 
 .line-grid-data {
   font-size: 13px;
+}
+
+.trip-share {
+  display: flex;
+  align-items: center;
+  padding: 10px;
+  cursor: pointer;
+}
+
+.trip-share:hover {
+  color: blue;
 }

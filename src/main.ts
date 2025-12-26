@@ -20,17 +20,20 @@ class Trip {
 
   constructor(data: PreliminaryTripData) {
     this.data = data;
-    const color = lineColors[this.name] ?? '#555';
 
     const origin = simplifyStopName(this.data.origin.name);
     const destination = simplifyStopName(this.data.destination.name);
     const popupHtml = `<div class="line-info-container">
-  <div class="line-name" style="background-color: ${color}">${this.name}</div>
+  <div class="line-name" style="background-color: ${this.color}">${this.name}</div>
   <div class="line-grid">
     <div class="line-grid-header">Von:</div>
     <div class="line-grid-data">${origin}</div>
     <div class="line-grid-header">Nach:</div>
     <div class="line-grid-data">${destination}</div>
+  </div>
+  <div id="trip-share-link" class="trip-share">
+    <span class="material-symbols-outlined">share</span>
+    Link
   </div>
 </div>`;
 
@@ -42,9 +45,21 @@ class Trip {
       .on('click', (e) => {
         if (currentRoute) { currentRoute.remove(); }
         if (!this.isDetailed) { return; }
-        const latLons = this.getRouteLatLons();
-        currentRoute = L.polyline(latLons, {color}).addTo(map);
+        currentRoute = this.showPolyline();
       });
+
+    this.marker.on('popupopen', (e: L.PopupEvent) => {
+      const popupEl = e.popup.getElement() as HTMLElement | null;
+      if (!popupEl) { return; }
+      const btn = popupEl.querySelector('#trip-share-link') as HTMLElement | null;
+      if (!btn) { return; }
+      const handler = (ev: Event) => {
+        ev.preventDefault();
+        shareTrip(this.id);
+      };
+      btn.addEventListener('click', handler);
+      this.marker.once('popupclose', () => btn.removeEventListener('click', handler));
+    });
   }
 
   get emoji(): string {
@@ -68,6 +83,10 @@ class Trip {
 
   get id(): string {
     return this.data.id;
+  }
+
+  get color(): string {
+    return lineColors[this.name] ?? '#555';
   }
 
   get cancelled(): boolean {
@@ -126,6 +145,7 @@ class Trip {
 
         this.stops.push({
           id: stop.stop.id,
+          name: stop.stop.name,
           latitude: stop.stop.location.latitude,
           longitude: stop.stop.location.longitude,
           stationPoint,
@@ -146,6 +166,12 @@ class Trip {
     if (this.stops[this.stops.length - 1]!.arrival != this.arrival) {
       console.warn(`Mismatch between last stop arrival ${this.stops[this.stops.length - 1]!.arrival} and trip arrival ${this.arrival} for trip id ${this.id} (${this.name}).`);
     }
+  }
+
+  showPolyline() {
+    const latLons = this.getRouteLatLons();
+    const color = this.color;
+    return L.polyline(latLons, {color}).addTo(map);
   }
 
   updateMarkerIcon(highlightUpdate = false) {
@@ -246,6 +272,15 @@ class Trip {
   }
 }
 
+export function shareTrip(id: string) {
+  console.log(`Sharing trip with id ${id}.`);
+  navigator.share({
+    title: 'Live Transit Trip',
+    text: 'Berlin Operator',
+    url: `${window.location.origin}${window.location.pathname}?trip=${id}`,
+  });
+}
+
 function getPointFromLatLon(lat: number, lon: number, originLat = 52.519170, originLon = 13.409606): Point {
   const METERS_PER_DEG = 40074000 / 360;  // Earth circumference
   const lonScale = Math.cos(originLat / 180 * Math.PI);
@@ -276,6 +311,12 @@ function getSegmentLength(stop: StopData) {
 }
 
 function simplifyStopName(stopName: string): string {
+  if (stopName.endsWith(']')) {
+    const bracketIndex = stopName.lastIndexOf(' [');
+    if (bracketIndex != -1) {
+      stopName = stopName.slice(0, bracketIndex);
+    }
+  }
   if (stopName.endsWith(' (Berlin)')) {
     stopName = stopName.slice(0, -9);
   }
@@ -290,7 +331,10 @@ L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
     attribution: '&copy; <a href="http://www.openstreetmap.org/copyright">OpenStreetMap</a>'
 }).addTo(map);
 
-map.locate({setView: true, maxZoom: 15});
+const urlParams = new URLSearchParams(window.location.search);
+const selectTripId = urlParams.get('trip');
+
+if (!selectTripId) { map.locate({setView: true, maxZoom: 15}); }
 
 let trips = new Map<string, Trip>();
 let currentRoute: L.Polyline | null = null;
@@ -315,6 +359,10 @@ function fetchNewTrips() {
     }
     const trip = new Trip(preliminaryData);
     trips.set(preliminaryData.id, trip);
+
+    if (selectTripId && trip.id == selectTripId) {
+      map.setView(trip.marker.getLatLng(), 15);
+    }
 
     fetchTripDetails(preliminaryData.id, (detailedData) => {
       onDetailedData(trip, detailedData);
@@ -396,6 +444,13 @@ function onDetailedData(trip: Trip, data: DetailedTripData) {
 
   trip.setData(data);
   highlightMarker(trip);
+
+  if (selectTripId && trip.id == selectTripId) {
+    map.setView(trip.marker.getLatLng(), 15);
+    trip.marker.openPopup();
+    currentRoute?.remove();
+    currentRoute = trip.showPolyline();
+  }
 }
 
 /**
@@ -408,7 +463,7 @@ function highlightMarker(trip: Trip) {
 }
 
 
-map.on("moveend zoomend", () => {
+map.on('moveend zoomend', () => {
   updateRequestOrder();
   burst();
 });
