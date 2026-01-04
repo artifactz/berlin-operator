@@ -274,10 +274,12 @@ class Trip {
 
 export function shareTrip(id: string) {
   console.log(`Sharing trip with id ${id}.`);
+  const urlId = id.replaceAll('|', '-'); // "prettier" than using encodeURI
+  const url = `${window.location.origin}${window.location.pathname}?trip=${urlId}`;
   navigator.share({
     title: 'Live Transit Trip',
     text: 'Berlin Operator',
-    url: `${window.location.origin}${window.location.pathname}?trip=${id}`,
+    url,
   });
 }
 
@@ -332,7 +334,7 @@ L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
 }).addTo(map);
 
 const urlParams = new URLSearchParams(window.location.search);
-const selectTripId = urlParams.get('trip');
+const selectTripId = urlParams.get('trip')?.replaceAll('-', '|');
 
 if (!selectTripId) { map.locate({setView: true, maxZoom: 15}); }
 
