@@ -43,9 +43,9 @@ class Trip {
       .bindPopup(popupHtml)
       .addTo(map)
       .on('click', (e) => {
-        if (currentRoute) { currentRoute.remove(); }
+        if (currentRoute) { currentRoute.forEach(layer => layer.remove()); }
         if (!this.isDetailed) { return; }
-        currentRoute = this.showPolyline();
+        currentRoute = this.showRoute();
       });
 
     this.marker.on('popupopen', (e: L.PopupEvent) => {
@@ -168,10 +168,24 @@ class Trip {
     }
   }
 
-  showPolyline() {
-    const latLons = this.getRouteLatLons();
+  /**
+   * Displays the full route of this trip on the map.
+   * @returns Array of created Leaflet layers (polyline and stop markers).
+   */
+  showRoute(): Array<L.Layer> {
     const color = this.color;
-    return L.polyline(latLons, {color}).addTo(map);
+    const polylineLatLons = this.getRouteLatLons();
+    const polyline = L.polyline(polylineLatLons, {color}).addTo(map);
+    const stopLatLons = this.getStopLatLons();
+    const stops = stopLatLons.map(([lat, lon]) => L.circleMarker([lat, lon], {
+      radius: 5,
+      color,
+      weight: 2,
+      fillColor: '#fff',
+      fillOpacity: 1,
+    }).addTo(map));
+
+    return [...stops, polyline];
   }
 
   updateMarkerIcon(highlightUpdate = false) {
@@ -258,7 +272,18 @@ class Trip {
     return getLatLonFromPoint(point.x, point.y);
   }
 
-  getRoutePoints() {
+  getStopPoints(): Array<Point> {
+    return this.stops.map(stop => stop.point);
+  }
+
+  getStopLatLons(): Array<[number, number]> {
+    return this.getStopPoints().map(p => {
+      const latLon = getLatLonFromPoint(p.x, p.y);
+      return [latLon.lat, latLon.lon];
+    });
+  }
+
+  getRoutePoints(): Array<Point> {
     const points = [this.stops[0]!.point];
     this.stops.forEach(stop => { stop.segmentPoints.forEach(p => { points.push(p); }); });
     return points;
@@ -339,10 +364,10 @@ const selectTripId = urlParams.get('trip')?.replaceAll('-', '|');
 if (!selectTripId) { map.locate({setView: true, maxZoom: 15}); }
 
 let trips = new Map<string, Trip>();
-let currentRoute: L.Polyline | null = null;
+let currentRoute: Array<L.Layer> | null = null;
 
 map.on('click', (e) => {
-  if (currentRoute) { currentRoute.remove(); }
+  if (currentRoute) { currentRoute.forEach(layer => layer.remove()); }
   currentRoute = null;
 });
 
@@ -450,8 +475,8 @@ function onDetailedData(trip: Trip, data: DetailedTripData) {
   if (selectTripId && trip.id == selectTripId) {
     map.setView(trip.marker.getLatLng(), 15);
     trip.marker.openPopup();
-    currentRoute?.remove();
-    currentRoute = trip.showPolyline();
+    currentRoute?.forEach(layer => layer.remove());
+    currentRoute = trip.showRoute();
   }
 }
 
@@ -478,7 +503,7 @@ function animate() {
 
     if (trip.isFinished()) {
       if (trip.marker.getPopup()!.isOpen()) {
-        currentRoute!.remove();
+        currentRoute!.forEach(layer => layer.remove());
         currentRoute = null;
       }
       trip.marker.remove();
