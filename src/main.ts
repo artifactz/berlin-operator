@@ -21,8 +21,8 @@ class Trip {
   constructor(data: PreliminaryTripData) {
     this.data = data;
 
-    const origin = simplifyStopName(this.data.origin.name);
-    const destination = simplifyStopName(this.data.destination.name);
+    const origin = sanitizeStopName(this.data.origin.name);
+    const destination = sanitizeStopName(this.data.destination.name);
     const popupHtml = `<div class="line-info-container">
   <div class="line-name" style="background-color: ${this.color}">${this.name}</div>
   <div class="line-grid">
@@ -337,7 +337,10 @@ function getSegmentLength(stop: StopData) {
   return length;
 }
 
-function simplifyStopName(stopName: string): string {
+/**
+ * Makes a stop name ready for display by removing unnecessary suffixes and making slashes breakable.
+ */
+function sanitizeStopName(stopName: string): string {
   if (stopName.endsWith(']')) {
     const bracketIndex = stopName.lastIndexOf(' [');
     if (bracketIndex != -1) {
@@ -347,6 +350,7 @@ function simplifyStopName(stopName: string): string {
   if (stopName.endsWith(' (Berlin)')) {
     stopName = stopName.slice(0, -9);
   }
+  stopName = stopName.replaceAll('/', '&hairsp;/&hairsp;');
   return stopName;
 }
 
