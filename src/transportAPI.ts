@@ -121,6 +121,7 @@ export function fetchAllTrips(
 ) {
   const numRequests = 7;
   const urls = [...Array(numRequests)].map((u, i) => 'https://v6.bvg.transport.rest/trips?operatorNames=Berliner Verkehrsbetriebe,S-Bahn Berlin GmbH'
+      + '&pretty=false'
       + '&suburban=' + (i === 0)
       + '&subway=' + (i === 1)
       + '&tram=' + (i === 2)
