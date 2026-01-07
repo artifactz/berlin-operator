@@ -1,35 +1,28 @@
+import { Trip } from "./trip.js"
 import { burst, fetchAllTrips, fetchTripDetails, updateRequestQueue } from "./transportAPI.js";
-import { Point, LatLon } from "./types.js"
-import type { PreliminaryTripData, DetailedTripData, StopData } from "./types.js"
+import type { DetailedTripData } from "./types.js"
 
-import L, { DivIcon } from 'leaflet';
+import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
-
-import * as lineColors from './colors.json' with { type: 'json' }
 
 
 /**
- * Represents a trip on the map, i.e. a vehicle with a location.
- * As soon as detailed data is available (isDetailed = true), stops data is used to getCurrentPosition.
+ * A trip on the map. Provides UI methods to a corresponding `Trip` object.
  */
-class Trip {
+class MapTrip {
   marker: L.Marker;
-  data: PreliminaryTripData | DetailedTripData;
-  detailsTimestamp: number | null = null;
-  stops: Array<StopData> = [];
+  trip: Trip
 
-  constructor(data: PreliminaryTripData) {
-    this.data = data;
+  constructor(trip: Trip) {
+    this.trip = trip;
 
-    const origin = sanitizeStopName(this.data.origin.name);
-    const destination = sanitizeStopName(this.data.destination.name);
     const popupHtml = `<div class="line-info-container">
-  <div class="line-name" style="background-color: ${this.color}">${this.name}</div>
+  <div class="line-name" style="background-color: ${trip.color}">${trip.name}</div>
   <div class="line-grid">
     <div class="line-grid-header">Von:</div>
-    <div class="line-grid-data">${origin}</div>
+    <div class="line-grid-data">${trip.origin}</div>
     <div class="line-grid-header">Nach:</div>
-    <div class="line-grid-data">${destination}</div>
+    <div class="line-grid-data">${trip.destination}</div>
   </div>
   <div id="trip-share-link" class="trip-share">
     <span class="material-symbols-outlined">share</span>
@@ -37,14 +30,14 @@ class Trip {
   </div>
 </div>`;
 
-    this.marker = L.marker([data.currentLocation.latitude, data.currentLocation.longitude], {
+    this.marker = L.marker([trip.data.currentLocation.latitude, trip.data.currentLocation.longitude], { // TODO property?
       icon: this.createIcon()
     })
       .bindPopup(popupHtml)
       .addTo(map)
       .on('popupopen', (e: L.PopupEvent) => {
         if (currentRoute) { currentRoute.forEach(layer => layer.remove()); }
-        if (this.isDetailed) { currentRoute = this.showRoute(); }
+        if (this.trip.isDetailed) { currentRoute = this.showRoute(); }
 
         const popupEl = e.popup.getElement() as HTMLElement | null;
         if (!popupEl) { return; }
@@ -52,7 +45,7 @@ class Trip {
         if (!btn) { return; }
         const handler = (ev: Event) => {
           ev.preventDefault();
-          shareTrip(this.id);
+          shareTrip(this.trip.id);
         };
         btn.addEventListener('click', handler);
         this.marker.once('popupclose', () => btn.removeEventListener('click', handler));
@@ -63,121 +56,15 @@ class Trip {
       });
   }
 
-  get emoji(): string {
-    const product = this.data.line.product;
-    return (product == 'suburban')
-      ? '🚈'
-      : (product == 'subway')
-        ? '🚇'
-        : (product == 'tram')
-          ? '🚋'
-          : (product == 'bus')
-            ? '🚌'
-            : (product == 'ferry')
-              ? '🛥️'
-              : '🐒';  // Unknown transit product
-  }
-
-  get name(): string {
-    return this.data.line.name;
-  }
-
-  get id(): string {
-    return this.data.id;
-  }
-
-  get color(): string {
-    return lineColors[this.name] ?? '#555';
-  }
-
-  get cancelled(): boolean {
-    return this.data.cancelled;
-  }
-
-  get departure(): number {
-    console.assert(this.data.departure != null);
-    return Date.parse(this.data.departure);
-  }
-
-  get arrival(): number {
-    console.assert(this.data.arrival != null);
-    return Date.parse(this.data.arrival);
-  }
-
-  get isDetailed(): boolean {
-    return this.detailsTimestamp !== null;
-  }
-
-  /**
-   * Makes this a detailed trip, enabling getCurrentPosition.
-   */
-  setDetailedData(data: DetailedTripData) {
-    this.data = data;
-    this.detailsTimestamp = Date.now();
-
-    let stops: Array<StopData> = [];
-    let prevStopId = null;
-
-    // Retrieve stops from polyline
-    for (let i = 0; i < data.polyline.features.length; i++) {
-      const element = data.polyline.features[i];
-      const point = getPointFromLatLon(element.geometry.coordinates[1], element.geometry.coordinates[0]);
-
-      // Check if element is a stop location, but skip consecutive occurrences
-      if (element.properties.id && (prevStopId === null || prevStopId != element.properties.id)) {
-        if (prevStopId !== null) {
-          stops[stops.length - 1]!.segmentPoints.push(point);
-        }
-        stops.push({
-          id: element.properties.id,
-          name: element.properties.name,
-          point,
-          segmentPoints: [],
-        });
-        prevStopId = element.properties.id;
-      } else if (stops.length > 0) {
-        stops[stops.length - 1]!.segmentPoints.push(point);
-      } else {
-        console.warn(`Polyline element without stop id before first stop for trip id ${this.id} (${this.name}).`);
-      }
-    }
-
-    // Search corresponding stopovers and fill in arrival/departure times
-    let completedStopoverIndex = -1;
-    for (let i = 0; i < stops.length; i++) {
-      const stop = stops[i]!;
-      for (let j = completedStopoverIndex + 1; j < data.stopovers.length; j++) {
-        const stopover = data.stopovers[j];
-
-        if ((stop.arrival || stop.departure) && stopover.stop.id != stop.id) { break; }
-        if (stopover.stop.id != stop.id) { continue; }
-
-        // In case of multiple (consecutive) stopover occurrences, use earliest arrival and latest departure
-        if (!stop.arrival && i > 0) { stop.arrival = Date.parse(stopover.arrival); }
-        stop.departure = Date.parse(stopover.departure);
-        stop.cancelled = stopover.cancelled || false;
-
-        completedStopoverIndex = j;
-      }
-    }
-
-    // Filter out stops not found in stopovers
-    stops = stops.filter(stop => stop.arrival !== undefined || stop.departure !== undefined);
-
-    // Compute segment lengths
-    stops.forEach(stop => { stop.segmentLength = getSegmentLength(stop); });
-    this.stops = stops;
-  }
-
   /**
    * Displays the full route of this trip on the map.
    * @returns Array of created Leaflet layers (polyline and stop markers).
    */
   showRoute(): Array<L.Layer> {
-    const color = this.color;
-    const polylineLatLons = this.getRouteLatLons();
+    const color = this.trip.color;
+    const polylineLatLons = this.trip.getRouteLatLons();
     const polyline = L.polyline(polylineLatLons, {color}).addTo(map);
-    const stopLatLons = this.getStopLatLons();
+    const stopLatLons = this.trip.getStopLatLons();
     const stops = stopLatLons.map(([lat, lon]) => L.circleMarker([lat, lon], {
       radius: 5,
       color,
@@ -194,107 +81,22 @@ class Trip {
   }
 
   createIcon(highlightUpdate = false): L.DivIcon {
-    const className = (!this.isDetailed)
+    const className = (!this.trip.isDetailed)
       ? 'preliminary-vehicle vehicle'
       : highlightUpdate
         ? 'updated-vehicle vehicle'
         : 'vehicle';
     return L.divIcon({
       className,
-      html: `<div>${this.emoji}</div>`,
+      html: `<div>${this.trip.emoji}</div>`,
       iconSize: [40, 40],
       iconAnchor: [20, 20],
     });
   }
 
   updateMarkerPosition() {
-    const latLon = this.getCurrentLatLon();
+    const latLon = this.trip.getCurrentLatLon();
     this.marker.setLatLng([latLon.lat, latLon.lon]);
-  }
-
-  isFinished(extraSeconds = 15) {
-    return this.arrival + extraSeconds * 1000 < Date.now();
-  }
-
-  getCurrentPosition(): Point {
-    const now = Date.now();
-    let fromStop = this.stops[0]!;
-    let toStop = this.stops[this.stops.length - 1]!;
-    for (let i = 1; i < this.stops.length; i++) {
-      const stop = this.stops[i]!;
-      if (stop.cancelled) { continue; }
-      if ((stop.arrival && stop.arrival <= now) || (stop.departure && stop.departure <= now)) {
-        fromStop = stop;
-      }
-      if (stop.arrival && stop.arrival > now) {
-        toStop = stop;
-        break;
-      }
-    }
-
-    if (fromStop === toStop || fromStop.departure >= now) {
-      return fromStop.point;
-    }
-
-    // TODO handle merge of points on cancelled stop
-
-    const segmentDuration = toStop.arrival - fromStop.departure;
-    const timeIntoSegment = now - fromStop.departure;
-    const segmentProgress = timeIntoSegment / segmentDuration;
-
-    console.assert(segmentProgress > 0 && segmentProgress < 1);
-
-    // Find position along segment points
-    let distanceAlongSegment = segmentProgress * fromStop.segmentLength;
-    let p1 = fromStop.point;
-    for (let i = 0; i < fromStop.segmentPoints.length; i++) {
-      const p2 = fromStop.segmentPoints[i]!;
-      const dx = p2.x - p1.x;
-      const dy = p2.y - p1.y;
-      const pointDistance = Math.sqrt(dx * dx + dy * dy);
-      if (distanceAlongSegment <= pointDistance) {
-        const ratio = distanceAlongSegment / pointDistance;
-        return new Point(
-          p1.x + ratio * dx,
-          p1.y + ratio * dy,
-        )
-      } else {
-        distanceAlongSegment -= pointDistance;
-      }
-      p1 = p2;
-    }
-
-    console.assert(false, 'Should not reach here');
-    return new Point(0, 0);
-  }
-
-  getCurrentLatLon(): LatLon {
-    const point = this.getCurrentPosition();
-    return getLatLonFromPoint(point.x, point.y);
-  }
-
-  getStopPoints(): Array<Point> {
-    return this.stops.map(stop => stop.point);
-  }
-
-  getStopLatLons(): Array<[number, number]> {
-    return this.getStopPoints().map(p => {
-      const latLon = getLatLonFromPoint(p.x, p.y);
-      return [latLon.lat, latLon.lon];
-    });
-  }
-
-  getRoutePoints(): Array<Point> {
-    const points = [this.stops[0]!.point];
-    this.stops.forEach(stop => { stop.segmentPoints.forEach(p => { points.push(p); }); });
-    return points;
-  }
-
-  getRouteLatLons(): Array<[number, number]> {
-    return this.getRoutePoints().map(p => {
-      const latLon = getLatLonFromPoint(p.x, p.y);
-      return [latLon.lat, latLon.lon];
-    });
   }
 }
 
@@ -309,51 +111,7 @@ export function shareTrip(id: string) {
   });
 }
 
-function getPointFromLatLon(lat: number, lon: number, originLat = 52.519170, originLon = 13.409606): Point {
-  const METERS_PER_DEG = 40074000 / 360;  // Earth circumference
-  const lonScale = Math.cos(originLat / 180 * Math.PI);
-  const x = (lon - originLon) * METERS_PER_DEG * lonScale;
-  const y = (lat - originLat) * METERS_PER_DEG;
-  return new Point(x, y);
-}
 
-function getLatLonFromPoint(x: number, y: number, originLat = 52.519170, originLon = 13.409606): LatLon {
-  const METERS_PER_DEG = 40074000 / 360;  // Earth circumference
-  const lonScale = Math.cos(originLat / 180 * Math.PI);
-  const lon = x / (METERS_PER_DEG * lonScale) + originLon;
-  const lat = y / METERS_PER_DEG + originLat;
-  return new LatLon(lat, lon);
-}
-
-function getSegmentLength(stop: StopData) {
-  let length = 0;
-  let p1 = stop.point;
-  for (let i = 0; i < stop.segmentPoints.length; i++) {
-    const p2 = stop.segmentPoints[i]!;
-    const dx = p2.x - p1.x;
-    const dy = p2.y - p1.y;
-    length += Math.sqrt(dx * dx + dy * dy);
-    p1 = p2;
-  }
-  return length;
-}
-
-/**
- * Makes a stop name ready for display by removing unnecessary suffixes and making slashes breakable.
- */
-function sanitizeStopName(stopName: string): string {
-  if (stopName.endsWith(']')) {
-    const bracketIndex = stopName.lastIndexOf(' [');
-    if (bracketIndex != -1) {
-      stopName = stopName.slice(0, bracketIndex);
-    }
-  }
-  if (stopName.endsWith(' (Berlin)')) {
-    stopName = stopName.slice(0, -9);
-  }
-  stopName = stopName.replaceAll('/', '&hairsp;/&hairsp;');
-  return stopName;
-}
 
 
 const map = L.map('map').setView([52.52, 13.405], 13);
@@ -368,7 +126,7 @@ const selectTripId = urlParams.get('trip')?.replaceAll('-', '|');
 
 if (!selectTripId) { map.locate({setView: true, maxZoom: 15}); }
 
-let trips = new Map<string, Trip>();
+let trips = new Map<string, MapTrip>();
 let currentRoute: Array<L.Layer> | null = null;
 
 map.on('click', (e) => {
@@ -389,10 +147,10 @@ function fetchNewTrips() {
       // console.log(`Skipping duplicate preliminary trip with id ${preliminaryData.id}.`);
       return;
     }
-    const trip = new Trip(preliminaryData);
+    const trip = new MapTrip(new Trip(preliminaryData));
     trips.set(preliminaryData.id, trip);
 
-    if (selectTripId && trip.id == selectTripId) {
+    if (selectTripId && trip.trip.id == selectTripId) {
       map.setView(trip.marker.getLatLng(), 15);
     }
 
@@ -422,8 +180,8 @@ function updateRequestOrder() {
   for (const trip of trips.values()) {
     const distanceMeters = map.distance(center, trip.marker.getLatLng());
     let priority = distanceMeters;  // Requests with lower priority value are executed first
-    if (trip.isDetailed) {
-      const ageSeconds = (Date.now() - trip.detailsTimestamp!) / 1000;
+    if (trip.trip.isDetailed) {
+      const ageSeconds = (Date.now() - trip.trip.detailsTimestamp!) / 1000;
       if (ageSeconds < 1) {
         continue;
       }
@@ -432,7 +190,7 @@ function updateRequestOrder() {
     queue.push({trip, priority});
   }
   queue.sort((a, b) => a.priority - b.priority);
-  updateRequestQueue(queue.map(item => item.trip.id), (id, detailedData) => {
+  updateRequestQueue(queue.map(item => item.trip.trip.id), (id, detailedData) => {
     const trip = trips.get(id);
     if (!trip) {
       console.warn(`Received detailed data for unknown trip id ${id}.`);
@@ -450,34 +208,34 @@ function updateRequestOrder() {
 /**
  * Handles arrival of fetched detailed trip data.
  */
-function onDetailedData(trip: Trip, data: DetailedTripData) {
+function onDetailedData(trip: MapTrip, data: DetailedTripData) {
   if (data.notModified) {
-    trip.detailsTimestamp = Date.now();
+    trip.trip.detailsTimestamp = Date.now();
     highlightMarker(trip);
     return;
   }
 
   if (data.cancelled) {
     trip.marker.remove();
-    trips.delete(trip.id);
+    trips.delete(trip.trip.id);
     return;  // Abort
   }
 
-  if (data.id != trip.id) {
-    trips.delete(trip.id);
+  if (data.id != trip.trip.id) {
+    trips.delete(trip.trip.id);
     if (trips.has(data.id)) {
-      console.log(`Removed trip with id ${trip.id} becaused it resolved to existing trip with id ${data.id}.`);
+      console.log(`Removed trip with id ${trip.trip.id} becaused it resolved to existing trip with id ${data.id}.`);
       return;  // Abort
     } else {
       trips.set(data.id, trip);
-      console.log(`Updated trip id from ${trip.id} to ${data.id}.`);
+      console.log(`Updated trip id from ${trip.trip.id} to ${data.id}.`);
     }
   }
 
-  trip.setDetailedData(data);
+  trip.trip.setDetailedData(data);
   highlightMarker(trip);
 
-  if (selectTripId && trip.id == selectTripId) {
+  if (selectTripId && trip.trip.id == selectTripId) {
     map.setView(trip.marker.getLatLng(), 15);
     trip.marker.openPopup();
     currentRoute?.forEach(layer => layer.remove());
@@ -488,7 +246,7 @@ function onDetailedData(trip: Trip, data: DetailedTripData) {
 /**
  * Flashes the marker icon to highlight an update.
  */
-function highlightMarker(trip: Trip) {
+function highlightMarker(trip: MapTrip) {
   trip.updateMarkerIcon(true);
   setTimeout(() => { trip.updateMarkerIcon(); }, 750);
 
@@ -503,19 +261,19 @@ map.on('moveend zoomend', () => {
 
 // Animation loop
 function animate() {
-  trips.values().forEach((trip: Trip) => {
-    if (!trip.isDetailed) { return; }
+  trips.values().forEach((trip: MapTrip) => {
+    if (!trip.trip.isDetailed) { return; }
 
-    if (trip.isFinished()) {
+    if (trip.trip.isFinished()) {
       if (trip.marker.getPopup()!.isOpen()) {
         currentRoute!.forEach(layer => layer.remove());
         currentRoute = null;
       }
       trip.marker.remove();
-      trips.delete(trip.data.id);
+      trips.delete(trip.trip.id);
 
     } else {
-      const latlon = trip.getCurrentLatLon();
+      const latlon = trip.trip.getCurrentLatLon();
       trip.marker.setLatLng([latlon.lat, latlon.lon]);
     }
   });
