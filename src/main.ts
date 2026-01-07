@@ -109,64 +109,64 @@ class Trip {
   }
 
   /**
-   * Makes this a detailed trip enabling getCurrentPosition.
+   * Makes this a detailed trip, enabling getCurrentPosition.
    */
-  setData(data: DetailedTripData) {
+  setDetailedData(data: DetailedTripData) {
     this.data = data;
     this.detailsTimestamp = Date.now();
-    this.stops = [];
 
-    // Iterate polyline and stopover items in parallel
-    let j = -1;
-    let lastStopId = null;
+    let stops: Array<StopData> = [];
+    let prevStopId = null;
+
+    // Retrieve stops from polyline
     for (let i = 0; i < data.polyline.features.length; i++) {
       const element = data.polyline.features[i];
-
       const point = getPointFromLatLon(element.geometry.coordinates[1], element.geometry.coordinates[0]);
 
-      // Check if an entry is a stop location, but skip consecutive occurrences
-      if (element.properties.id && (lastStopId === null || lastStopId != element.properties.id)) {
-        j++;
-
-        if (j > 0) {
-          this.stops[j - 1]!.segmentPoints.push(point);
-          this.stops[j - 1]!.segmentLength = getSegmentLength(this.stops[j - 1]!);
+      // Check if element is a stop location, but skip consecutive occurrences
+      if (element.properties.id && (prevStopId === null || prevStopId != element.properties.id)) {
+        if (prevStopId !== null) {
+          stops[stops.length - 1]!.segmentPoints.push(point);
         }
-
-        const stop = data.stopovers[j];
-        const stationPoint = getPointFromLatLon(stop.stop.location.latitude, stop.stop.location.longitude);
-
-        let arrival = Date.parse(stop.arrival);
-        let departure = Date.parse(stop.departure);
-        if (arrival == departure) {
-          // A stop takes at least 15 seconds
-          arrival -= 7500;
-          departure += 7500;
-        }
-
-        this.stops.push({
-          id: stop.stop.id,
-          name: stop.stop.name,
-          latitude: stop.stop.location.latitude,
-          longitude: stop.stop.location.longitude,
-          stationPoint,
+        stops.push({
+          id: element.properties.id,
+          name: element.properties.name,
           point,
-          arrival,
-          departure,
           segmentPoints: [],
-          cancelled: stop.cancelled || false,
         });
-
-        lastStopId = element.properties.id;
-
+        prevStopId = element.properties.id;
+      } else if (stops.length > 0) {
+        stops[stops.length - 1]!.segmentPoints.push(point);
       } else {
-        this.stops[j]!.segmentPoints.push(point);
+        console.warn(`Polyline element without stop id before first stop for trip id ${this.id} (${this.name}).`);
       }
     }
 
-    if (this.stops[this.stops.length - 1]!.arrival != this.arrival) {
-      console.warn(`Mismatch between last stop arrival ${this.stops[this.stops.length - 1]!.arrival} and trip arrival ${this.arrival} for trip id ${this.id} (${this.name}).`);
+    // Search corresponding stopovers and fill in arrival/departure times
+    let completedStopoverIndex = -1;
+    for (let i = 0; i < stops.length; i++) {
+      const stop = stops[i]!;
+      for (let j = completedStopoverIndex + 1; j < data.stopovers.length; j++) {
+        const stopover = data.stopovers[j];
+
+        if ((stop.arrival || stop.departure) && stopover.stop.id != stop.id) { break; }
+        if (stopover.stop.id != stop.id) { continue; }
+
+        // In case of multiple (consecutive) stopover occurrences, use earliest arrival and latest departure
+        if (!stop.arrival && i > 0) { stop.arrival = Date.parse(stopover.arrival); }
+        stop.departure = Date.parse(stopover.departure);
+        stop.cancelled = stopover.cancelled || false;
+
+        completedStopoverIndex = j;
+      }
     }
+
+    // Filter out stops not found in stopovers
+    stops = stops.filter(stop => stop.arrival !== undefined || stop.departure !== undefined);
+
+    // Compute segment lengths
+    stops.forEach(stop => { stop.segmentLength = getSegmentLength(stop); });
+    this.stops = stops;
   }
 
   /**
@@ -474,7 +474,7 @@ function onDetailedData(trip: Trip, data: DetailedTripData) {
     }
   }
 
-  trip.setData(data);
+  trip.setDetailedData(data);
   highlightMarker(trip);
 
   if (selectTripId && trip.id == selectTripId) {
