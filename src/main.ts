@@ -42,24 +42,25 @@ class Trip {
     })
       .bindPopup(popupHtml)
       .addTo(map)
-      .on('click', (e) => {
+      .on('popupopen', (e: L.PopupEvent) => {
         if (currentRoute) { currentRoute.forEach(layer => layer.remove()); }
-        if (!this.isDetailed) { return; }
-        currentRoute = this.showRoute();
-      });
+        if (this.isDetailed) { currentRoute = this.showRoute(); }
 
-    this.marker.on('popupopen', (e: L.PopupEvent) => {
-      const popupEl = e.popup.getElement() as HTMLElement | null;
-      if (!popupEl) { return; }
-      const btn = popupEl.querySelector('#trip-share-link') as HTMLElement | null;
-      if (!btn) { return; }
-      const handler = (ev: Event) => {
-        ev.preventDefault();
-        shareTrip(this.id);
-      };
-      btn.addEventListener('click', handler);
-      this.marker.once('popupclose', () => btn.removeEventListener('click', handler));
-    });
+        const popupEl = e.popup.getElement() as HTMLElement | null;
+        if (!popupEl) { return; }
+        const btn = popupEl.querySelector('#trip-share-link') as HTMLElement | null;
+        if (!btn) { return; }
+        const handler = (ev: Event) => {
+          ev.preventDefault();
+          shareTrip(this.id);
+        };
+        btn.addEventListener('click', handler);
+        this.marker.once('popupclose', () => btn.removeEventListener('click', handler));
+      })
+      .on('popupclose', (e: L.PopupEvent) => {
+        if (currentRoute) { currentRoute.forEach(layer => layer.remove()); }
+        currentRoute = null;
+      });
   }
 
   get emoji(): string {
