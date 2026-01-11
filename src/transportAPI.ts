@@ -184,9 +184,10 @@ async function performTripRequest(
     const url = `https://v6.bvg.transport.rest/trips/${id}?polyline=true`;
     const response = await fetch(url);
 
-    if (response.status == 500) {
-      backoff();
-      requestQueue.add(() => performTripRequest(id, tripCallback));
+    if (response.status == 200) {
+      const responseData = await response.json();
+      tripCallback(id, responseData.trip);
+      return;
     }
 
     if (response.status == 304) {
@@ -194,8 +195,9 @@ async function performTripRequest(
       return;
     }
 
-    const responseData = await response.json();
-    tripCallback(id, responseData.trip);
+    console.warn(`Error fetching trip details for id ${id}: ${response.status} ${response.statusText}`);
+    backoff();
+    requestQueue.add(() => performTripRequest(id, tripCallback));
 }
 
 export function burst(intervalMs = 300, durationMs = 60000) {
