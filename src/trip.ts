@@ -103,9 +103,18 @@ export class Trip {
         if ((stop.arrival || stop.departure) && stopover.stop.id != stop.id) { break; }
         if (stopover.stop.id != stop.id) { continue; }
 
+        let arrival = stopover.arrival ? Date.parse(stopover.arrival) : null;
+        let departure = stopover.departure ? Date.parse(stopover.departure) : null;
+
+        // A stop takes at least 15 seconds
+        if (arrival && departure && arrival == departure) {
+          arrival -= 7500;
+          departure += 7500;
+        }
+
         // In case of multiple (consecutive) stopover occurrences, use earliest arrival and latest departure
-        if (!stop.arrival && i > 0) { stop.arrival = Date.parse(stopover.arrival); }
-        stop.departure = Date.parse(stopover.departure);
+        if (!stop.arrival && i > 0) { stop.arrival = arrival; }
+        stop.departure = departure;
         stop.cancelled = stopover.cancelled || false;
 
         completedStopoverIndex = j;
