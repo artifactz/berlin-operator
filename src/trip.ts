@@ -157,7 +157,7 @@ export class Trip {
 
     const segmentDuration = toStop.arrival - fromStop.departure;
     const timeIntoSegment = now - fromStop.departure;
-    const segmentProgress = timeIntoSegment / segmentDuration;
+    const segmentProgress = getAugmentedSegmentProgress(segmentDuration, timeIntoSegment);
 
     console.assert(segmentProgress > 0 && segmentProgress < 1);
 
@@ -231,4 +231,13 @@ function sanitizeStopName(stopName: string): string {
   }
   stopName = stopName.replaceAll('/', '&hairsp;/&hairsp;');
   return stopName;
+}
+
+/**
+ * Calculates eased progress along a segment for more realistic movement.
+ */
+function getAugmentedSegmentProgress(segmentDuration: number, timeIntoSegment: number): number {
+  const baseProgress = timeIntoSegment / segmentDuration;
+  const easedProgress = baseProgress * baseProgress * (3 - 2 * baseProgress); // Smoothstep
+  return easedProgress;
 }
