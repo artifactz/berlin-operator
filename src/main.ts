@@ -112,8 +112,6 @@ export function shareTrip(id: string) {
 }
 
 
-
-
 const map = L.map('map').setView([52.52, 13.405], 13);
 
 L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
@@ -121,18 +119,27 @@ L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
     attribution: '&copy; <a href="http://www.openstreetmap.org/copyright">OpenStreetMap</a>'
 }).addTo(map);
 
+const locateButton = document.getElementById('locate-btn') as HTMLButtonElement;
+locateButton.addEventListener('click', () => {
+  map.locate({setView: true, maxZoom: 15});
+});
+
 const urlParams = new URLSearchParams(window.location.search);
 const selectTripId = urlParams.get('trip')?.replaceAll('-', '|');
-
-if (!selectTripId) { map.locate({setView: true, maxZoom: 15}); }
+if (!selectTripId) { map.locate({setView: true, maxZoom: 15}); }  // TODO don't setView when out of town
 
 let trips = new Map<string, MapTrip>();
 let currentRoute: Array<L.Layer> | null = null;
 
-map.on('click', (e) => {
-  if (currentRoute) { currentRoute.forEach(layer => layer.remove()); }
-  currentRoute = null;
-});
+map
+  .on('click', (e) => {
+    if (currentRoute) { currentRoute.forEach(layer => layer.remove()); }
+    currentRoute = null;
+  })
+  .on('moveend zoomend', () => {
+    updateRequestOrder();
+    burst();
+  });
 
 
 let fetchNewTripsTimer: ReturnType<typeof setInterval> | null = null;
@@ -251,13 +258,6 @@ function highlightMarker(trip: MapTrip) {
   setTimeout(() => { trip.updateMarkerIcon(); }, 750);
 
 }
-
-
-map.on('moveend zoomend', () => {
-  updateRequestOrder();
-  burst();
-});
-
 
 // Animation loop
 function animate() {
