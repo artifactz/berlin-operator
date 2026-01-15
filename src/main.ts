@@ -1,6 +1,6 @@
 import { Trip } from "./trip.js"
 import { burst, fetchAllTrips, fetchTripDetails, updateRequestQueue } from "./transportAPI.js";
-import type { DetailedTripData } from "./types.js"
+import type { DetailedTripData, PreliminaryTripData } from "./types.js"
 
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
@@ -98,6 +98,11 @@ class MapTrip {
     const latLon = this.trip.getCurrentLatLon();
     this.marker.setLatLng([latLon.lat, latLon.lon]);
   }
+
+  updatePreliminaryData(data: PreliminaryTripData) {
+    this.trip.setPreliminaryData(data);
+    this.updateMarkerPosition();
+  }
 }
 
 export function shareTrip(id: string) {
@@ -149,7 +154,7 @@ function fetchNewTrips() {
   console.log('Fetching new trips...');
   fetchAllTrips((preliminaryData) => {
     if (trips.has(preliminaryData.id)) {
-      // console.log(`Skipping duplicate preliminary trip with id ${preliminaryData.id}.`);
+      trips.get(preliminaryData.id)!.updatePreliminaryData(preliminaryData);
       return;
     }
     const trip = new MapTrip(new Trip(preliminaryData));
@@ -269,8 +274,7 @@ function animate() {
       trips.delete(trip.trip.id);
 
     } else {
-      const latlon = trip.trip.getCurrentLatLon();
-      trip.marker.setLatLng([latlon.lat, latlon.lon]);
+      trip.updateMarkerPosition();
     }
   });
 

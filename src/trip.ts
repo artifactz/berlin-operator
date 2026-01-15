@@ -1,5 +1,5 @@
-import type { PreliminaryTripData, DetailedTripData, StopData, LatLon } from "./types.js"
-import { Point } from "./types.js"
+import type { PreliminaryTripData, DetailedTripData, StopData } from "./types.js"
+import { Point, LatLon } from "./types.js"
 import { getLatLonFromPoint, getPointFromLatLon, getSegmentLength } from "./geo.js";
 import * as lineColors from './colors.json' with { type: 'json' }
 
@@ -57,6 +57,10 @@ export class Trip {
 
   get isDetailed(): boolean {
     return this.detailsTimestamp !== null;
+  }
+
+  setPreliminaryData(data: PreliminaryTripData) {
+    this.data = data;
   }
 
   /**
@@ -133,7 +137,11 @@ export class Trip {
     return this.arrival + extraSeconds * 1000 < Date.now();
   }
 
-  getCurrentPosition(): Point {
+  /**
+   * Gets the current position of the trip as a Point in meters relative to the origin.
+   * Requires the trip to be detailed (isDetailed = true).
+   */
+  getCurrentPositionDetailed(): Point {
     const now = Date.now();
     let fromStop = this.stops[0]!;
     let toStop = this.stops[this.stops.length - 1]!;
@@ -186,8 +194,16 @@ export class Trip {
   }
 
   getCurrentLatLon(): LatLon {
-    const point = this.getCurrentPosition();
+    return (this.isDetailed) ? this.#getCurrentLatLonDetailed() : this.#getCurrentLatLonPreliminary();
+  }
+
+  #getCurrentLatLonDetailed(): LatLon {
+    const point = this.getCurrentPositionDetailed();
     return getLatLonFromPoint(point.x, point.y);
+  }
+
+  #getCurrentLatLonPreliminary(): LatLon {
+    return new LatLon(this.data.currentLocation.latitude, this.data.currentLocation.longitude);
   }
 
   getStopPoints(): Array<Point> {
