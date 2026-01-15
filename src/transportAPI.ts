@@ -151,6 +151,13 @@ async function fetchAllTripsFromUrl(url: string): Promise<Array<PreliminaryTripD
         return [];
       }
       throw new Error(`Error fetching ${url}: ${responseData['message'] || response.statusText}`);
+    })
+    .catch(error => {
+      console.error(error);
+      console.log('Retrying after 10 s...');
+      // Retry after 10 s
+      new Promise((resolve) => setTimeout(resolve, 10000))
+        .then(() => fetchAllTripsFromUrl(url));
     });
 }
 
@@ -182,22 +189,32 @@ async function performTripRequest(
   tripCallback: (id: string, data: DetailedTripData) => void
 ) {
     const url = `https://v6.bvg.transport.rest/trips/${id}?polyline=true`;
-    const response = await fetch(url);
 
-    if (response.status == 200) {
-      const responseData = await response.json();
-      tripCallback(id, responseData.trip);
-      return;
+    const onFail = () => {
+      // Wait and retry
+      backoff();
+      requestQueue.add(() => performTripRequest(id, tripCallback));
     }
 
-    if (response.status == 304) {
-      tripCallback(id, { notModified: true });
-      return;
-    }
+    fetch(url)
+      .then((response) => {
+        if (response.status == 200) {
+          response.json().then(responseData => tripCallback(id, responseData.trip));
+          return;
+        }
 
-    console.warn(`Error fetching trip details for id ${id}: ${response.status} ${response.statusText}`);
-    backoff();
-    requestQueue.add(() => performTripRequest(id, tripCallback));
+        if (response.status == 304) {
+          tripCallback(id, { notModified: true });
+          return;
+        }
+
+        console.warn(`Error fetching trip details for id ${id}: ${response.status} ${response.statusText}`);
+        onFail();
+      })
+      .catch((error) => {
+        console.error(`Error fetching trip details for id ${id}: ${error}`);
+        onFail();
+      });
 }
 
 export function burst(intervalMs = 300, durationMs = 60000) {

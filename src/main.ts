@@ -142,8 +142,6 @@ map
   });
 
 
-let fetchNewTripsTimer: ReturnType<typeof setInterval> | null = null;
-
 /**
  * Fetches preliminary data for all trips, adds new ones, and schedules a detailed data request for them.
  */
@@ -166,13 +164,11 @@ function fetchNewTrips() {
     });
   }, () => {
     updateRequestOrder();
+    setTimeout(() => { fetchNewTrips(); }, 90000); // Fetch new trips every 90 seconds
   });
 }
 
 fetchNewTrips();
-fetchNewTripsTimer = setInterval(() => {
-  fetchNewTrips();
-}, 90000);  // Fetch new trips every 90 seconds
 
 
 let updateRequestOrderTimer: ReturnType<typeof setInterval> | null = null;
