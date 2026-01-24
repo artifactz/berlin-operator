@@ -36,6 +36,8 @@ class MapTrip {
       .bindPopup(popupHtml)
       .addTo(map)
       .on('popupopen', (e: L.PopupEvent) => {
+        console.log(`Last update: ${(Date.now() - (trip.detailsTimestamp ?? trip.creationTimestamp)) / 1000} s ago.`);
+
         if (currentRoute) { currentRoute.forEach(layer => layer.remove()); }
         if (this.trip.isDetailed) { currentRoute = this.showRoute(); }
 
@@ -181,27 +183,44 @@ let updateRequestOrderTimer: ReturnType<typeof setInterval> | null = null;
 /**
  * Updates the request queue to fetch detailed trip data in order of proximity to the map center and time since last
  * update.
+ * @param minRefreshIntervalSeconds Minimum interval between detailed data requests for the same trip.
+ * @param preliminaryTripAge Age assigned to preliminary trips when calculating priority. This helps to avoid
+ * preliminary trips along the map border taking priority over detailed trips in view eventually.
+ * @param viewRadiusMeters Radius around the map center within which preliminary trips are prioritized.
  */
-function updateRequestOrder() {
+function updateRequestOrder(
+  minRefreshIntervalSeconds: number = 30,
+  preliminaryTripAge: number = 150,
+  viewRadiusMeters: number = 4000
+) {
   const queue = [];
   const center = map.getCenter();
+
   for (const trip of trips.values()) {
     const distanceMeters = map.distance(center, trip.marker.getLatLng());
-    let priority = distanceMeters;  // Requests with lower priority value are executed first
+    let ageSeconds;
+    let firstUpdatePrio = 0;
     if (trip.trip.isDetailed) {
-      const ageSeconds = (Date.now() - trip.trip.detailsTimestamp!) / 1000;
-      if (ageSeconds < 1) {
-        continue;
-      }
-      priority += 5000 - 50 * ageSeconds;
+      ageSeconds = (Date.now() - trip.trip.detailsTimestamp!) / 1000;
+      if (ageSeconds < minRefreshIntervalSeconds) { continue; } // Skip trips that were updated recently
+    } else {
+      ageSeconds = preliminaryTripAge;
+      if (distanceMeters < viewRadiusMeters) { firstUpdatePrio = 1e6; } // Prioritize preliminary trips in view
     }
+    const prioAge = 1 + ageSeconds; // High age -> high priority
+    const prioDist = Math.exp(-distanceMeters / 5000); // High distance -> low priority
+    const priority = firstUpdatePrio + prioDist * prioAge;
+
     queue.push({trip, priority});
   }
-  queue.sort((a, b) => a.priority - b.priority);
+
+  queue.sort((a, b) => b.priority - a.priority);  // Descending
+
   updateRequestQueue(queue.map(item => item.trip.trip.id), (id, detailedData) => {
     const trip = trips.get(id);
     if (!trip) {
-      console.warn(`Received detailed data for unknown trip id ${id}.`);
+      // Trip probably just ended
+      console.warn(`Discarding detailed data for outdated trip id ${id}.`);
       return;
     }
     onDetailedData(trip, detailedData);
