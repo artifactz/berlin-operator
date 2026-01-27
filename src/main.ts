@@ -78,6 +78,14 @@ class MapTrip {
     return [...stops, polyline];
   }
 
+  /**
+   * Flashes the marker icon to highlight an update.
+   */
+  highlightMarker() {
+    this.updateMarkerIcon(true);
+    setTimeout(() => { this.updateMarkerIcon(); }, 750);
+  }
+
   updateMarkerIcon(highlightUpdate = false) {
     this.marker.setIcon(this.createIcon(highlightUpdate));
   }
@@ -96,14 +104,20 @@ class MapTrip {
     });
   }
 
-  updateMarkerPosition() {
-    const latLon = this.trip.getCurrentLatLon();
-    this.marker.setLatLng([latLon.lat, latLon.lon]);
-  }
-
   updatePreliminaryData(data: PreliminaryTripData) {
     this.trip.setPreliminaryData(data);
     this.updateMarkerPosition();
+  }
+
+  updateDetailedData(data: DetailedTripData) {
+    this.trip.setDetailedData(data);
+    this.updateMarkerPosition();
+    this.highlightMarker();
+  }
+
+  updateMarkerPosition() {
+    const latLon = this.trip.getCurrentLatLon();
+    this.marker.setLatLng([latLon.lat, latLon.lon]);
   }
 }
 
@@ -128,15 +142,21 @@ L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
 
 const locateButton = document.getElementById('locate-btn') as HTMLButtonElement;
 locateButton.addEventListener('click', () => {
-  map.locate({setView: true, maxZoom: 15});
+  map.locate({ setView: true, maxZoom: 15 });
 });
 
 const urlParams = new URLSearchParams(window.location.search);
-const selectTripId = urlParams.get('trip')?.replaceAll('-', '|');
-if (!selectTripId) { map.locate({setView: true, maxZoom: 15}); }  // TODO don't setView when out of town
+let selectTripId: string | null = urlParams.get('trip')?.replaceAll('-', '|') || null;
+if (!selectTripId) { map.locate({ setView: true, maxZoom: 15 }); }  // TODO don't setView when out of town
 
 let trips = new Map<string, MapTrip>();
 let currentRoute: Array<L.Layer> | null = null;
+
+/**
+ * Trip to open popup for after setView ends. The popup cannot be opened before, because it stops the animation.
+ * Disabling the animation { animate: false } is worse UX.
+ */
+let popupTripAfterMove: MapTrip | null = null;
 
 map
   .on('click', (e) => {
@@ -144,6 +164,11 @@ map
     currentRoute = null;
   })
   .on('moveend zoomend', () => {
+    if (popupTripAfterMove) {
+      // Open scheduled popup
+      popupTripAfterMove.marker.openPopup();
+      popupTripAfterMove = null;
+    }
     updateRequestOrder();
     burst();
   });
@@ -163,7 +188,7 @@ function fetchNewTrips() {
     trips.set(preliminaryData.id, trip);
 
     if (selectTripId && trip.trip.id == selectTripId) {
-      map.setView(trip.marker.getLatLng(), 15);
+      map.setView(trip.marker.getLatLng(), 15, { animate: true });
     }
 
     fetchTripDetails(preliminaryData.id, (detailedData) => {
@@ -238,7 +263,7 @@ function updateRequestOrder(
 function onDetailedData(trip: MapTrip, data: DetailedTripData) {
   if (data.notModified) {
     trip.trip.detailsTimestamp = Date.now();
-    highlightMarker(trip);
+    trip.highlightMarker();
     return;
   }
 
@@ -259,24 +284,14 @@ function onDetailedData(trip: MapTrip, data: DetailedTripData) {
     }
   }
 
-  trip.trip.setDetailedData(data);
-  highlightMarker(trip);
+  trip.updateDetailedData(data);
 
   if (selectTripId && trip.trip.id == selectTripId) {
-    map.setView(trip.marker.getLatLng(), 15);
-    trip.marker.openPopup();
-    currentRoute?.forEach(layer => layer.remove());
-    currentRoute = trip.showRoute();
+    // Start zoom/pan animation and schedule popup opening
+    map.setView(trip.marker.getLatLng(), 15, { animate: true });
+    popupTripAfterMove = trip;
+    selectTripId = null;
   }
-}
-
-/**
- * Flashes the marker icon to highlight an update.
- */
-function highlightMarker(trip: MapTrip) {
-  trip.updateMarkerIcon(true);
-  setTimeout(() => { trip.updateMarkerIcon(); }, 750);
-
 }
 
 // Animation loop
