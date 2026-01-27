@@ -11,10 +11,12 @@ import * as lineColors from './colors.json' with { type: 'json' }
 export class Trip {
   data: PreliminaryTripData | DetailedTripData;
   detailsTimestamp: number | null = null;
+  creationTimestamp: number;
   stops: Array<StopData> = [];
 
   constructor(data: PreliminaryTripData) {
     this.data = data;
+    this.creationTimestamp = Date.now();
   }
 
   get name(): string { return this.data.line.name; }
@@ -88,6 +90,8 @@ export class Trip {
           name: element.properties.name,
           point,
           segmentPoints: [],
+          arrival: null,
+          departure: null
         });
         prevStopId = element.properties.id;
       } else if (stops.length > 0) {
@@ -110,6 +114,13 @@ export class Trip {
         let arrival = stopover.arrival ? Date.parse(stopover.arrival) : null;
         let departure = stopover.departure ? Date.parse(stopover.departure) : null;
 
+        // Arrival/departure might be missing on occasion; assume arrival == departure
+        if (arrival === null && departure !== null) {
+          arrival = departure;
+        } else if (departure === null && arrival !== null) {
+          departure = arrival;
+        }
+
         // A stop takes at least 15 seconds
         if (arrival && departure && arrival == departure) {
           arrival -= 7500;
@@ -128,6 +139,16 @@ export class Trip {
     // Filter out stops not found in stopovers
     stops = stops.filter(stop => stop.arrival !== undefined || stop.departure !== undefined);
 
+    // First stop never has arrival and last stop never has departure
+    if (stops.length > 0) {
+      stops[0]!.arrival = null;
+      stops[stops.length - 1]!.departure = null;
+    }
+
+    if (stops.length < 2) {
+      console.warn(`Trip id ${this.id} (${this.name}) only has ${stops.length} stops.`);
+    }
+
     // Compute segment lengths
     stops.forEach(stop => { stop.segmentLength = getSegmentLength(stop); });
     this.stops = stops;
@@ -143,37 +164,57 @@ export class Trip {
    */
   getCurrentPositionDetailed(): Point {
     const now = Date.now();
-    let fromStop = this.stops[0]!;
-    let toStop = this.stops[this.stops.length - 1]!;
-    for (let i = 1; i < this.stops.length; i++) {
+    let fromStopIndex = 0;
+    let fromStop = this.stops[fromStopIndex]!;
+    let toStopIndex = this.stops.length - 1;
+    let toStop = this.stops[toStopIndex]!;
+
+    for (let i = 1; i < this.stops.length; i++) { // Begin at 2nd stop
       const stop = this.stops[i]!;
-      if (stop.cancelled) { continue; }
+      if (stop.cancelled) {
+        continue;
+      }
+
+      // Only update fromStop when we arrived or departed there already
       if ((stop.arrival && stop.arrival <= now) || (stop.departure && stop.departure <= now)) {
+        fromStopIndex = i;
         fromStop = stop;
       }
+
+      // toStop is the first stop we haven't arrived at yet
       if (stop.arrival && stop.arrival > now) {
+        toStopIndex = i;
         toStop = stop;
         break;
       }
     }
 
-    if (fromStop === toStop || fromStop.departure >= now) {
+    // Trip is currently waiting at a stop or didn't depart at all yet
+    if (fromStop === toStop || (fromStop.departure && fromStop.departure >= now)) {
       return fromStop.point;
     }
 
-    // TODO handle merge of points on cancelled stop
+    console.assert(fromStop.departure !== null && toStop.arrival !== null)
 
-    const segmentDuration = toStop.arrival - fromStop.departure;
-    const timeIntoSegment = now - fromStop.departure;
+    const segmentDuration = toStop.arrival! - fromStop.departure!;
+    const timeIntoSegment = now - fromStop.departure!;
     const segmentProgress = getAugmentedSegmentProgress(segmentDuration, timeIntoSegment);
 
-    console.assert(segmentProgress > 0 && segmentProgress < 1);
+    console.assert(segmentProgress >= 0 && segmentProgress <= 1);
+
+    // Assemble segment points
+    const segmentPoints: Array<Point> = [];
+    let distanceAlongSegment = 0;
+    for (let i = fromStopIndex; i < toStopIndex; i++) {
+      segmentPoints.push(...this.stops[i]!.segmentPoints);
+      distanceAlongSegment += this.stops[i]!.segmentLength;
+    }
+    distanceAlongSegment *= segmentProgress;
 
     // Find position along segment points
-    let distanceAlongSegment = segmentProgress * fromStop.segmentLength;
     let p1 = fromStop.point;
-    for (let i = 0; i < fromStop.segmentPoints.length; i++) {
-      const p2 = fromStop.segmentPoints[i]!;
+    for (let i = 0; i < segmentPoints.length; i++) {
+      const p2 = segmentPoints[i]!;
       const dx = p2.x - p1.x;
       const dy = p2.y - p1.y;
       const pointDistance = Math.sqrt(dx * dx + dy * dy);

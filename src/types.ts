@@ -16,10 +16,16 @@ export class LatLon {
   }
 }
 
+/**
+ * Data returned by fetchAllTrips.
+ */
 export interface PreliminaryTripData {
   [key: string]: any;
 }
 
+/**
+ * Data returned by fetchTripDetails.
+ */
 export interface DetailedTripData {
   [key: string]: any;
   notModified?: boolean;
@@ -27,5 +33,10 @@ export interface DetailedTripData {
 
 export interface StopData {
   [key: string]: any;
+  id: string,
+  name: string,
+  point: Point,
   segmentPoints: Array<Point>;
+  arrival: number | null,
+  departure: number | null,
 }
