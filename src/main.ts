@@ -105,6 +105,7 @@ class MapTrip {
   }
 
   updatePreliminaryData(data: PreliminaryTripData) {
+    if (this.trip.isDetailed) { return; }
     this.trip.setPreliminaryData(data);
     this.updateMarkerPosition();
   }
@@ -174,12 +175,22 @@ map
   });
 
 
+function deleteTrip(id: string) {
+  if (!trips.has(id)) { return; }
+  trips.get(id)!.marker.remove();
+  trips.delete(id);
+}
+
 /**
  * Fetches preliminary data for all trips, adds new ones, and schedules a detailed data request for them.
  */
 function fetchNewTrips() {
   console.log('Fetching new trips...');
+  const fetchedIds: Array<string> = [];
+
   fetchAllTrips((preliminaryData) => {
+    fetchedIds.push(preliminaryData.id);
+
     if (trips.has(preliminaryData.id)) {
       trips.get(preliminaryData.id)!.updatePreliminaryData(preliminaryData);
       return;
@@ -195,6 +206,12 @@ function fetchNewTrips() {
       onDetailedData(trip, detailedData);
     });
   }, () => {
+    const missingIds = trips.keys().filter((id) => fetchedIds.indexOf(id) == -1);
+    for (const id of missingIds) {
+      // Remove preliminary trips that already ended
+      // Detailed trips will probably be removed in the next seconds after coasting to their last stop
+      if (!trips.get(id)!.trip.isDetailed) { deleteTrip(id); }
+    }
     updateRequestOrder();
     setTimeout(() => { fetchNewTrips(); }, 90000); // Fetch new trips every 90 seconds
   });
@@ -268,17 +285,17 @@ function onDetailedData(trip: MapTrip, data: DetailedTripData) {
   }
 
   if (data.cancelled) {
-    trip.marker.remove();
-    trips.delete(trip.trip.id);
+    deleteTrip(trip.trip.id);
     return;  // Abort
   }
 
   if (data.id != trip.trip.id) {
-    trips.delete(trip.trip.id);
     if (trips.has(data.id)) {
+      deleteTrip(trip.trip.id);
       console.log(`Removed trip with id ${trip.trip.id} becaused it resolved to existing trip with id ${data.id}.`);
       return;  // Abort
     } else {
+      trips.delete(trip.trip.id);
       trips.set(data.id, trip);
       console.log(`Updated trip id from ${trip.trip.id} to ${data.id}.`);
     }
@@ -304,8 +321,7 @@ function animate() {
         currentRoute!.forEach(layer => layer.remove());
         currentRoute = null;
       }
-      trip.marker.remove();
-      trips.delete(trip.trip.id);
+      deleteTrip(trip.trip.id);
 
     } else {
       trip.updateMarkerPosition();
