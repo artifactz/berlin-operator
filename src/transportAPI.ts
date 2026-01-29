@@ -4,7 +4,7 @@ import type { DetailedTripData, PreliminaryTripData } from "./types.js";
  * A simple request queue to limit the rate of requests made to the transport API.
  */
 class RequestQueue {
-  private queue: (() => Promise<void>)[] = [];
+  private queue: (() => void)[] = [];
   private interval: number;
   private timer: ReturnType<typeof setInterval> | null = null;
   private running = false;
@@ -24,7 +24,7 @@ class RequestQueue {
   /**
    * Sets the request queue to the given array of jobs in the order to be executed.
    */
-  setQueue(queue: (() => Promise<void>)[]) {
+  setQueue(queue: (() => void)[]) {
     this.queue = queue.reverse();
     this.start();
   }
@@ -32,7 +32,7 @@ class RequestQueue {
   /**
    * Adds a job to the request queue as the next job to be executed.
    */
-  add(job: () => Promise<void>) {
+  add(job: () => void) {
     this.queue.push(job);
     this.start();
   }
@@ -40,25 +40,26 @@ class RequestQueue {
   start() {
     if (this.running) return;
     this.running = true;
-    this.timer = setInterval(async () => {
-      if (this.burstTimestamp !== null && (Date.now() - this.burstTimestamp) > this.burstDuration) {
-        this.burstTimestamp = null;
-        this.updateInterval(this.originalInterval);
+    this.timer = setInterval(() => { this.#work(); }, this.interval);
+  }
+
+  #work() {
+    if (this.burstTimestamp !== null && (Date.now() - this.burstTimestamp) > this.burstDuration) {
+      this.burstTimestamp = null;
+      this.updateInterval(this.originalInterval);
+    }
+
+    if (this.backoffTimestamp !== null) {
+      if (Date.now() - this.backoffTimestamp > this.backoffDuration) {
+        this.backoffTimestamp = null;
+        console.log('Resuming requests');
+      } else {
+        return; // Back off
       }
+    }
 
-      if (this.backoffTimestamp !== null) {
-        if (Date.now() - this.backoffTimestamp > this.backoffDuration) {
-          this.backoffTimestamp = null;
-        } else {
-          return; // Back off
-        }
-      }
-
-      if (this.queue.length === 0) { return; }
-
-      const job = this.queue.pop()!;
-      await job();
-    }, this.interval);
+    const job = this.queue.pop();
+    if (job) { job(); }
   }
 
   stop() {
@@ -115,7 +116,7 @@ const requestQueue = new RequestQueue(600); // 1 request every 600ms
  * @param tripCallback Callback to be called for each fetched trip
  * @param finishedCallback Callback to be called when all trips have been fetched
  */
-export function fetchAllTrips(
+export async function fetchAllTrips(
   tripCallback: (data: PreliminaryTripData) => void,
   finishedCallback: () => void,
 ) {
@@ -131,13 +132,13 @@ export function fetchAllTrips(
       + '&regional=' + (i === 6));
 
   let numFinishedRequests = 0;
-  urls.forEach(url => {
-    fetchAllTripsFromUrl(url).then(trips => {
-      trips.forEach(tripCallback);
-      numFinishedRequests++;
-      if (numFinishedRequests == numRequests) { finishedCallback(); }
-    });
-  });
+  for (const url of urls) {
+    // Fetch urls sequentially to enable wait-and-retry logic
+    const trips = await fetchAllTripsFromUrl(url);
+    trips.forEach(tripCallback);
+    numFinishedRequests++;
+    if (numFinishedRequests == numRequests) { finishedCallback(); }
+  }
 }
 
 async function fetchAllTripsFromUrl(url: string): Promise<Array<PreliminaryTripData>> {
@@ -152,11 +153,11 @@ async function fetchAllTripsFromUrl(url: string): Promise<Array<PreliminaryTripD
       }
       throw new Error(`Error fetching ${url}: ${responseData['message'] || response.statusText}`);
     })
-    .catch(error => {
+    .catch(async error => {
       console.error(error);
       console.log('Retrying after 10 s...');
       // Retry after 10 s
-      new Promise((resolve) => setTimeout(resolve, 10000))
+      return new Promise((resolve) => setTimeout(resolve, 10000))
         .then(() => fetchAllTripsFromUrl(url));
     });
 }
@@ -166,8 +167,8 @@ async function fetchAllTripsFromUrl(url: string): Promise<Array<PreliminaryTripD
  * @param id Trip id
  * @param tripCallback Callback to be called with the fetched trip details
  */
-export async function fetchTripDetails(id: string, tripCallback: (data: DetailedTripData) => void) {
-  requestQueue.add(async () => await performTripRequest(id, (id, data) => tripCallback(data)));
+export function fetchTripDetails(id: string, tripCallback: (data: DetailedTripData) => void) {
+  requestQueue.add(() => performTripRequest(id, (id, data) => tripCallback(data)));
 }
 
 /**
@@ -175,16 +176,14 @@ export async function fetchTripDetails(id: string, tripCallback: (data: Detailed
  * @param ids Array of trip ids to fetch details for
  * @param tripCallback Callback to be called for each fetched trip
  */
-export async function updateRequestQueue(
+export function updateRequestQueue(
   ids: string[],
   tripCallback: (id: string, data: DetailedTripData) => void
 ) {
-  requestQueue.setQueue(ids.map(id => async () => {
-    await performTripRequest(id, tripCallback);
-  }));
+  requestQueue.setQueue(ids.map(id => () => performTripRequest(id, tripCallback)));
 }
 
-async function performTripRequest(
+function performTripRequest(
   id: string,
   tripCallback: (id: string, data: DetailedTripData) => void
 ) {
