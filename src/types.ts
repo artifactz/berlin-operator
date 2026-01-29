@@ -32,11 +32,14 @@ export interface DetailedTripData {
 }
 
 export interface StopData {
-  [key: string]: any;
-  id: string,
-  name: string,
-  point: Point,
+  id: string;
+  name: string;
+  cancelled: boolean;
+  latLon: LatLon;
+  point: Point;
+  segmentLatLons: Array<LatLon>;
   segmentPoints: Array<Point>;
-  arrival: number | null,
-  departure: number | null,
+  segmentLength: number;
+  arrival: number | null;
+  departure: number | null;
 }

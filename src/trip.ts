@@ -2,6 +2,7 @@ import type { PreliminaryTripData, DetailedTripData, StopData } from "./types.js
 import { Point, LatLon } from "./types.js"
 import { getLatLonFromPoint, getPointFromLatLon, getSegmentLength } from "./geo.js";
 import * as lineColors from './colors.json' with { type: 'json' }
+import { getPatch } from "./polylinePatches.js";
 
 
 /**
@@ -72,30 +73,28 @@ export class Trip {
     this.data = data;
     this.detailsTimestamp = Date.now();
 
-    let stops: Array<StopData> = [];
+    let stops: Array<Partial<StopData>> = [];
     let prevStopId = null;
 
     // Retrieve stops from polyline
     for (let i = 0; i < data.polyline.features.length; i++) {
       const element = data.polyline.features[i];
-      const point = getPointFromLatLon(element.geometry.coordinates[1], element.geometry.coordinates[0]);
+      const latLon = new LatLon(element.geometry.coordinates[1], element.geometry.coordinates[0]);
 
       // Check if element is a stop location, but skip consecutive occurrences
       if (element.properties.id && (prevStopId === null || prevStopId != element.properties.id)) {
         if (prevStopId !== null) {
-          stops[stops.length - 1]!.segmentPoints.push(point);
+          stops[stops.length - 1]!.segmentLatLons!.push(latLon);
         }
         stops.push({
           id: element.properties.id,
           name: element.properties.name,
-          point,
-          segmentPoints: [],
-          arrival: null,
-          departure: null
+          latLon,
+          segmentLatLons: [],
         });
         prevStopId = element.properties.id;
       } else if (stops.length > 0) {
-        stops[stops.length - 1]!.segmentPoints.push(point);
+        stops[stops.length - 1]!.segmentLatLons!.push(latLon);
       } else {
         console.warn(`Polyline element without stop id before first stop for trip id ${this.id} (${this.name}).`);
       }
@@ -111,32 +110,14 @@ export class Trip {
         if ((stop.arrival || stop.departure) && stopover.stop.id != stop.id) { break; }
         if (stopover.stop.id != stop.id) { continue; }
 
-        let arrival = stopover.arrival ? Date.parse(stopover.arrival) : null;
-        let departure = stopover.departure ? Date.parse(stopover.departure) : null;
-
-        // Arrival/departure might be missing on occasion; assume arrival == departure
-        if (arrival === null && departure !== null) {
-          arrival = departure;
-        } else if (departure === null && arrival !== null) {
-          departure = arrival;
-        }
-
-        // A stop takes at least 15 seconds
-        if (arrival && departure && arrival == departure) {
-          arrival -= 7500;
-          departure += 7500;
-        }
-
-        // In case of multiple (consecutive) stopover occurrences, use earliest arrival and latest departure
-        if (!stop.arrival && i > 0) { stop.arrival = arrival; }
-        stop.departure = departure;
-        stop.cancelled = stopover.cancelled || false;
+        initStopFromStopoverData(stop, stopover);
 
         completedStopoverIndex = j;
       }
     }
 
     // Filter out stops not found in stopovers
+    // TODO investigate wether to add segmentPoints to predecessor of removed stop
     stops = stops.filter(stop => stop.arrival !== undefined || stop.departure !== undefined);
 
     // First stop never has arrival and last stop never has departure
@@ -149,9 +130,7 @@ export class Trip {
       console.warn(`Trip id ${this.id} (${this.name}) only has ${stops.length} stops.`);
     }
 
-    // Compute segment lengths
-    stops.forEach(stop => { stop.segmentLength = getSegmentLength(stop); });
-    this.stops = stops;
+    this.stops = addPointsFromLatLons(this.name, stops);
   }
 
   isFinished(extraSeconds = 15) {
@@ -160,14 +139,20 @@ export class Trip {
 
   /**
    * Gets the current position of the trip as a Point in meters relative to the origin.
-   * Requires the trip to be detailed (isDetailed = true).
+   * Requires the trip to be detailed (isDetailed = true) and arrivals and departures to be valid timestamps (cancelled = false).
    */
   getCurrentPositionDetailed(): Point {
+    console.assert(this.isDetailed);
+    console.assert(!this.cancelled);
+
     const now = Date.now();
+    const [fromStopIndex, toStopIndex] = this.#getSurroundingStopIndices(now);
+    return this.#getPositionFromSurroundingStops(now, fromStopIndex, toStopIndex);
+  }
+
+  #getSurroundingStopIndices(now: number): [number, number] {
     let fromStopIndex = 0;
-    let fromStop = this.stops[fromStopIndex]!;
     let toStopIndex = this.stops.length - 1;
-    let toStop = this.stops[toStopIndex]!;
 
     for (let i = 1; i < this.stops.length; i++) { // Begin at 2nd stop
       const stop = this.stops[i]!;
@@ -178,19 +163,24 @@ export class Trip {
       // Only update fromStop when we arrived or departed there already
       if ((stop.arrival && stop.arrival <= now) || (stop.departure && stop.departure <= now)) {
         fromStopIndex = i;
-        fromStop = stop;
       }
 
       // toStop is the first stop we haven't arrived at yet
       if (stop.arrival && stop.arrival > now) {
         toStopIndex = i;
-        toStop = stop;
         break;
       }
     }
 
+    return [fromStopIndex, toStopIndex]
+  }
+
+  #getPositionFromSurroundingStops(now: number, fromStopIndex: number, toStopIndex: number): Point {
+    const fromStop = this.stops[fromStopIndex]!;
+    const toStop = this.stops[toStopIndex]!;
+
     // Trip is currently waiting at a stop or didn't depart at all yet
-    if (fromStop === toStop || (fromStop.departure && fromStop.departure >= now)) {
+    if (fromStopIndex == toStopIndex || (fromStop.departure && fromStop.departure >= now)) {
       return fromStop.point;
     }
 
@@ -235,7 +225,7 @@ export class Trip {
   }
 
   getCurrentLatLon(): LatLon {
-    return (this.isDetailed) ? this.#getCurrentLatLonDetailed() : this.#getCurrentLatLonPreliminary();
+    return (this.isDetailed && !this.cancelled) ? this.#getCurrentLatLonDetailed() : this.#getCurrentLatLonPreliminary();
   }
 
   #getCurrentLatLonDetailed(): LatLon {
@@ -272,6 +262,59 @@ export class Trip {
   }
 }
 
+/**
+ * Sets `arrival`, `departure`, and `cancelled` of the given stop with API data.
+ */
+function initStopFromStopoverData(stop: Partial<StopData>, stopover: any) {
+  let arrival = stopover.arrival ? Date.parse(stopover.arrival) : null;
+  let departure = stopover.departure ? Date.parse(stopover.departure) : null;
+
+  // Arrival/departure might be missing on occasion; assume arrival == departure
+  if (arrival === null && departure !== null) {
+    arrival = departure;
+  } else if (departure === null && arrival !== null) {
+    departure = arrival;
+  }
+
+  // A stop takes at least 15 seconds
+  if (arrival && departure && arrival == departure) {
+    arrival -= 7500;
+    departure += 7500;
+  }
+
+  // In case of multiple (consecutive) stopover occurrences, use earliest arrival and latest departure
+  if (!stop.arrival) { stop.arrival = arrival; }
+  stop.departure = departure;
+  stop.cancelled = stopover.cancelled || false;
+}
+
+/**
+ * Applies patches, converts LatLons to Points, and computes segment lengths of the given stops.
+ * @returns The stops as complete StopData objects.
+ */
+function addPointsFromLatLons(lineName: string, stops: Array<Partial<StopData>>): Array<StopData> {
+  for (let i = 0; i < stops.length; i++) {
+    const stop = stops[i]!;
+    const nextStop = stops[i + 1];
+
+    // Apply patch
+    if (nextStop) {
+      const patch = getPatch(stop.name!, nextStop.name!, lineName);
+      if (patch) {
+        if (stop.segmentLatLons && stop.segmentLatLons.length > 0) {
+          // Keep point of next stop
+          patch.push(stop.segmentLatLons[stop.segmentLatLons.length - 1]!);
+        }
+        stop.segmentLatLons = patch;
+      }
+    }
+
+    stop.point = getPointFromLatLon(stop.latLon!.lat, stop.latLon!.lon);
+    stop.segmentPoints = stop.segmentLatLons!.map(latLon => getPointFromLatLon(latLon.lat, latLon.lon));
+    stop.segmentLength = getSegmentLength(stop);
+  }
+  return stops as Array<StopData>;
+}
 
 /**
  * Makes a stop name ready for display by removing unnecessary suffixes and making slashes breakable.
