@@ -301,7 +301,13 @@ function onDetailedData(trip: MapTrip, data: DetailedTripData) {
     }
   }
 
+  const wasDetailed = trip.trip.isDetailed;
+
   trip.updateDetailedData(data);
+
+  if (!wasDetailed && trip.marker.isPopupOpen()) {
+    currentRoute = trip.showRoute();
+  }
 
   if (selectTripId && trip.trip.id == selectTripId) {
     // Start zoom/pan animation and schedule popup opening
