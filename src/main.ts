@@ -33,7 +33,7 @@ class MapTrip {
     this.marker = L.marker([trip.data.currentLocation.latitude, trip.data.currentLocation.longitude], { // TODO property?
       icon: this.createIcon()
     })
-      .bindPopup(popupHtml)
+      .bindPopup(popupHtml, {'className' : 'popup'})
       .addTo(map)
       .on('popupopen', (e: L.PopupEvent) => {
         console.log(`Last update: ${(Date.now() - (trip.detailsTimestamp ?? trip.creationTimestamp)) / 1000} s ago.`);
