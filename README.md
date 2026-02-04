@@ -1,3 +1,5 @@
+[![Deploy Node.js to GitHub Pages](https://github.com/artifactz/berlin-operator/actions/workflows/node.js.yml/badge.svg)](https://github.com/artifactz/berlin-operator/actions/workflows/node.js.yml)
+
 # berlin-operator
 
 An interactive map that shows the real-time position of public transport vehicles in Berlin.
